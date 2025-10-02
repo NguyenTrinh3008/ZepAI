@@ -798,14 +798,18 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
         else:
             results = await graphiti.search(req.query)
         
-        # DEBUG: Inspect first result structure
+        # DEBUG: Inspect search result structure
         if results and len(results) > 0:
             first_result = results[0]
+            logger.info(f"Graphiti search returned {len(results)} results")
             logger.info(f"Search result type: {type(first_result)}")
             if isinstance(first_result, dict):
-                logger.info(f"Search result keys: {first_result.keys()}")
+                logger.info(f"Search result keys: {list(first_result.keys())}")
+                logger.info(f"Search result sample: {first_result}")
             else:
-                logger.info(f"Search result attrs: {dir(first_result)}")
+                logger.info(f"Search result attrs: {[a for a in dir(first_result) if not a.startswith('_')]}")
+                # Try to get all attributes
+                logger.info(f"Search result data: {vars(first_result) if hasattr(first_result, '__dict__') else str(first_result)}")
         
         # Step 2: Build Neo4j filter query
         filter_conditions = ["e.project_id = $project_id"]
@@ -883,8 +887,9 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
                 }
         
         logger.info(f"Project filter: {len(valid_uuids)} valid entities for project {req.project_id}")
+        logger.info(f"Sample valid UUIDs: {list(valid_uuids)[:3]}")
         
-        # If no entities match filters, return empty (don't use semantic search)
+        # If no entities match filters, return empty
         if len(valid_uuids) == 0:
             logger.warning("No entities found matching project_id and filters")
             return {
@@ -893,9 +898,9 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
                 "project_id": req.project_id
             }
         
-        # Step 3: Return entities directly (bypass Graphiti search for now)
-        # Graphiti search may return Edges/Facts instead of Entities
-        # So we return the filtered entities directly
+        # Step 3: Return filtered entities directly
+        # Graphiti creates multiple entities per code change (dates, format_date, etc.)
+        # So we just return our filtered entities with full metadata
         filtered_results = []
         for uuid, data in entity_data.items():
             result_item = {
@@ -907,7 +912,7 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
             result_item.update(data)
             filtered_results.append(result_item)
         
-        # Sort by created_at desc
+        # Sort by created_at desc (most recent first)
         filtered_results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         
         logger.info(f"Filtered to {len(filtered_results)} results matching all criteria")

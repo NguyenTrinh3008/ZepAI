@@ -1,0 +1,665 @@
+{
+  "timestamp": "2025-10-02T07:46:33.650237",
+  "summary": {
+    "total": 16,
+    "passed": 16,
+    "failed": 0,
+    "by_category": {
+      "Python Tests": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0
+      },
+      "JavaScript Tests": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "Severity Tests": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0
+      },
+      "Edge Cases": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0
+      },
+      "Multi-Language": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0
+      }
+    }
+  },
+  "test_cases": [
+    {
+      "name": "Python auth service - critical change",
+      "category": "Python Tests",
+      "passed": true,
+      "duration_ms": 15093,
+      "payload": {
+        "file_before": "\ndef login(user):\n    return user.token\n",
+        "file_after": "\ndef login(user):\n    if not user:\n        raise ValueError('User is None')\n    if not user.is_active:\n        raise ValueError('User is inactive')\n    return user.token\n",
+        "chunks": [
+          {
+            "file_name": "src/auth/auth_service.py",
+            "file_action": "edit",
+            "line1": 2,
+            "line2": 6,
+            "lines_remove": "    return user.token",
+            "lines_add": "    if not user:\n        raise ValueError('User is None')\n    if not user.is_active:\n        raise ValueError('User is inactive')\n    return user.token"
+          }
+        ],
+        "meta": {
+          "project_id": "test_extended_python"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1,
+        "severity_in": [
+          "high",
+          "critical"
+        ]
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "50998125-f928-4269-8e53-2efeda9a993e"
+        ],
+        "summaries": [
+          "Added user null and active status checks in auth_service.py to prevent errors when accessing user token"
+        ],
+        "project_id": "test_extended_python"
+      },
+      "error": null
+    },
+    {
+      "name": "Python utility - low severity",
+      "category": "Python Tests",
+      "passed": true,
+      "duration_ms": 15748,
+      "payload": {
+        "file_before": "def format_date(d):\n    return str(d)",
+        "file_after": "def format_date(d):\n    return d.strftime('%Y-%m-%d')",
+        "chunks": [
+          {
+            "file_name": "src/utils/helpers.py",
+            "file_action": "edit",
+            "line1": 2,
+            "line2": 2,
+            "lines_remove": "    return str(d)",
+            "lines_add": "    return d.strftime('%Y-%m-%d')"
+          }
+        ],
+        "meta": {
+          "project_id": "test_extended_python"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "269d4270-379b-453e-84a1-54207b7cda7a"
+        ],
+        "summaries": [
+          "Edited return statement in src/utils/helpers.py to format date as 'YYYY-MM-DD' instead of default string conversion"
+        ],
+        "project_id": "test_extended_python"
+      },
+      "error": null
+    },
+    {
+      "name": "Python class - method addition",
+      "category": "Python Tests",
+      "passed": true,
+      "duration_ms": 18961,
+      "payload": {
+        "file_before": "\nclass User:\n    def __init__(self, name):\n        self.name = name\n",
+        "file_after": "\nclass User:\n    def __init__(self, name):\n        self.name = name\n    \n    def validate_email(self):\n        return '@' in self.name\n",
+        "chunks": [
+          {
+            "file_name": "src/models/user.py",
+            "file_action": "edit",
+            "line1": 4,
+            "line2": 6,
+            "lines_remove": "",
+            "lines_add": "    \n    def validate_email(self):\n        return '@' in self.name"
+          }
+        ],
+        "meta": {
+          "project_id": "test_extended_python"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "8474f14b-6953-4283-8a77-b56b4b196814"
+        ],
+        "summaries": [
+          "Added validate_email method in src/models/user.py to check if user's name contains '@' symbol for basic email validation"
+        ],
+        "project_id": "test_extended_python"
+      },
+      "error": null
+    },
+    {
+      "name": "JavaScript API - new endpoint",
+      "category": "JavaScript Tests",
+      "passed": true,
+      "duration_ms": 20089,
+      "payload": {
+        "file_before": "\napp.get('/users', (req, res) => {\n  res.json(users);\n});\n",
+        "file_after": "\napp.get('/users', async (req, res) => {\n  const users = await db.getUsers();\n  res.json(users);\n});\n\napp.post('/users', async (req, res) => {\n  const user = await db.createUser(req.body);\n  res.json(user);\n});\n",
+        "chunks": [
+          {
+            "file_name": "src/api/users.js",
+            "file_action": "edit",
+            "line1": 1,
+            "line2": 9,
+            "lines_remove": "app.get('/users', (req, res) => {\n  res.json(users);\n});",
+            "lines_add": "app.get('/users', async (req, res) => {\n  const users = await db.getUsers();\n  res.json(users);\n});\n\napp.post('/users', async (req, res) => {\n  const user = await db.createUser(req.body);\n  res.json(user);\n});"
+          }
+        ],
+        "meta": {
+          "project_id": "test_extended_js"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "adc076e8-a18f-4500-9886-4d02383b168e"
+        ],
+        "summaries": [
+          "Refactored /users GET endpoint to async DB call and added POST /users endpoint in src/api/users.js for dynamic user retrieval and creation"
+        ],
+        "project_id": "test_extended_js"
+      },
+      "error": null
+    },
+    {
+      "name": "TypeScript React - component update",
+      "category": "JavaScript Tests",
+      "passed": true,
+      "duration_ms": 13820,
+      "payload": {
+        "file_before": "\nexport const Header = () => {\n  return <div>Hello</div>;\n};\n",
+        "file_after": "\nexport const Header: React.FC = () => {\n  const [user, setUser] = useState(null);\n  \n  return (\n    <div>\n      <h1>Hello {user?.name}</h1>\n    </div>\n  );\n};\n",
+        "chunks": [
+          {
+            "file_name": "src/components/Header.tsx",
+            "file_action": "edit",
+            "line1": 1,
+            "line2": 9,
+            "lines_remove": "export const Header = () => {\n  return <div>Hello</div>;\n};",
+            "lines_add": "export const Header: React.FC = () => {\n  const [user, setUser] = useState(null);\n  \n  return (\n    <div>\n      <h1>Hello {user?.name}</h1>\n    </div>\n  );\n};"
+          }
+        ],
+        "meta": {
+          "project_id": "test_extended_js"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "0e680431-c37a-4765-8674-d339d2457537"
+        ],
+        "summaries": [
+          "Refactored Header component in src/components/Header.tsx to add user state and display user name dynamically"
+        ],
+        "project_id": "test_extended_js"
+      },
+      "error": null
+    },
+    {
+      "name": "Critical - Database schema change",
+      "category": "Severity Tests",
+      "passed": true,
+      "duration_ms": 17916,
+      "payload": {
+        "file_before": "CREATE TABLE users (id INT, name VARCHAR(100));",
+        "file_after": "CREATE TABLE users (\n  id INT PRIMARY KEY,\n  name VARCHAR(100) NOT NULL,\n  email VARCHAR(255) UNIQUE,\n  password_hash VARCHAR(255) NOT NULL,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);",
+        "chunks": [
+          {
+            "file_name": "migrations/001_create_users.sql",
+            "file_action": "edit",
+            "line1": 1,
+            "line2": 6,
+            "lines_remove": "CREATE TABLE users (id INT, name VARCHAR(100));",
+            "lines_add": "CREATE TABLE users (\n  id INT PRIMARY KEY,\n  name VARCHAR(100) NOT NULL,\n  email VARCHAR(255) UNIQUE,\n  password_hash VARCHAR(255) NOT NULL,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);"
+          }
+        ],
+        "meta": {
+          "project_id": "test_severity"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "78294426-5d12-49b6-94ff-e57dd4cecede"
+        ],
+        "summaries": [
+          "Updated users table schema in migrations/001_create_users.sql to add constraints and new fields for improved data integrity and user information storage"
+        ],
+        "project_id": "test_severity"
+      },
+      "error": null
+    },
+    {
+      "name": "High - Security vulnerability fix",
+      "category": "Severity Tests",
+      "passed": true,
+      "duration_ms": 13940,
+      "payload": {
+        "file_before": "const token = req.headers.token;",
+        "file_after": "const token = req.headers.authorization?.replace('Bearer ', '');\nif (!token || !validateToken(token)) {\n  return res.status(401).json({ error: 'Unauthorized' });\n}",
+        "chunks": [
+          {
+            "file_name": "src/middleware/security.js",
+            "file_action": "edit",
+            "line1": 1,
+            "line2": 4,
+            "lines_remove": "const token = req.headers.token;",
+            "lines_add": "const token = req.headers.authorization?.replace('Bearer ', '');\nif (!token || !validateToken(token)) {\n  return res.status(401).json({ error: 'Unauthorized' });\n}"
+          }
+        ],
+        "meta": {
+          "project_id": "test_severity"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "6bf0454e-d479-4fc6-a3b8-62e3c888ff7a"
+        ],
+        "summaries": [
+          "Replaced token extraction in src/middleware/security.js to parse Bearer token from authorization header and validate it for improved security checks"
+        ],
+        "project_id": "test_severity"
+      },
+      "error": null
+    },
+    {
+      "name": "Low - README update",
+      "category": "Severity Tests",
+      "passed": true,
+      "duration_ms": 13883,
+      "payload": {
+        "file_before": "# My Project\n\nA simple app",
+        "file_after": "# My Project\n\nA simple app for managing users.\n\n## Installation\n\n```bash\nnpm install\n```",
+        "chunks": [
+          {
+            "file_name": "README.md",
+            "file_action": "edit",
+            "line1": 3,
+            "line2": 8,
+            "lines_remove": "A simple app",
+            "lines_add": "A simple app for managing users.\n\n## Installation\n\n```bash\nnpm install\n```"
+          }
+        ],
+        "meta": {
+          "project_id": "test_severity"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "f252074b-ce0d-46c3-9fbc-8c9c29114fd6"
+        ],
+        "summaries": [
+          "Edited project description in README.md to add installation instructions and clarify app purpose."
+        ],
+        "project_id": "test_severity"
+      },
+      "error": null
+    },
+    {
+      "name": "Low - Test file update",
+      "category": "Severity Tests",
+      "passed": true,
+      "duration_ms": 15564,
+      "payload": {
+        "file_before": "def test_login():\n    pass",
+        "file_after": "def test_login():\n    user = create_user('test@example.com')\n    result = login(user)\n    assert result.token is not None",
+        "chunks": [
+          {
+            "file_name": "tests/test_auth.py",
+            "file_action": "edit",
+            "line1": 2,
+            "line2": 4,
+            "lines_remove": "    pass",
+            "lines_add": "    user = create_user('test@example.com')\n    result = login(user)\n    assert result.token is not None"
+          }
+        ],
+        "meta": {
+          "project_id": "test_severity"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "7f6226d1-ae19-4971-97c0-9286f4901a9f"
+        ],
+        "summaries": [
+          "Replaced placeholder with user login test in tests/test_auth.py to verify token generation on login"
+        ],
+        "project_id": "test_severity"
+      },
+      "error": null
+    },
+    {
+      "name": "Edge - Large refactoring (100+ lines)",
+      "category": "Edge Cases",
+      "passed": true,
+      "duration_ms": 16408,
+      "payload": {
+        "file_before": "# Old implementation\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\n",
+        "file_after": "# New implementation\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\n",
+        "chunks": [
+          {
+            "file_name": "src/core/processor.py",
+            "file_action": "edit",
+            "line1": 1,
+            "line2": 150,
+            "lines_remove": "# Old implementation\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\ndef process():\n    pass\n",
+            "lines_add": "# New implementation\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\nasync def process():\n    await task()\n"
+          }
+        ],
+        "meta": {
+          "project_id": "test_edge"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "a6c65c7c-2621-49d8-bf45-ecbe40fc3cca"
+        ],
+        "summaries": [
+          "Refactored process() in src/core/processor.py to async/await pattern for improved asynchronous task handling and performance"
+        ],
+        "project_id": "test_edge"
+      },
+      "error": null
+    },
+    {
+      "name": "Edge - Only whitespace changes",
+      "category": "Edge Cases",
+      "passed": true,
+      "duration_ms": 14249,
+      "payload": {
+        "file_before": "def hello():\n    print('hi')",
+        "file_after": "def hello():\n    \n    print('hi')\n    ",
+        "chunks": [
+          {
+            "file_name": "src/hello.py",
+            "file_action": "edit",
+            "line1": 2,
+            "line2": 3,
+            "lines_remove": "    print('hi')",
+            "lines_add": "    \n    print('hi')\n    "
+          }
+        ],
+        "meta": {
+          "project_id": "test_edge"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "88198bf0-99b2-461d-92a4-bc2970461e0b"
+        ],
+        "summaries": [
+          "Refactored print statement formatting in src/hello.py for improved code readability"
+        ],
+        "project_id": "test_edge"
+      },
+      "error": null
+    },
+    {
+      "name": "Edge - New file creation",
+      "category": "Edge Cases",
+      "passed": true,
+      "duration_ms": 15892,
+      "payload": {
+        "file_before": "",
+        "file_after": "export const config = {\n  apiUrl: 'http://localhost:3000'\n};",
+        "chunks": [
+          {
+            "file_name": "src/config.js",
+            "file_action": "add",
+            "line1": 1,
+            "line2": 3,
+            "lines_remove": "",
+            "lines_add": "export const config = {\n  apiUrl: 'http://localhost:3000'\n};"
+          }
+        ],
+        "meta": {
+          "project_id": "test_edge"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "81742dc3-2e67-45bc-84e5-2a441a2f3fe2"
+        ],
+        "summaries": [
+          "Added config object with apiUrl to src/config.js for centralizing API endpoint configuration"
+        ],
+        "project_id": "test_edge"
+      },
+      "error": null
+    },
+    {
+      "name": "Edge - File deletion",
+      "category": "Edge Cases",
+      "passed": true,
+      "duration_ms": 14272,
+      "payload": {
+        "file_before": "const OLD_CODE = 'deprecated';",
+        "file_after": "",
+        "chunks": [
+          {
+            "file_name": "src/deprecated.js",
+            "file_action": "remove",
+            "line1": 1,
+            "line2": 1,
+            "lines_remove": "const OLD_CODE = 'deprecated';",
+            "lines_add": ""
+          }
+        ],
+        "meta": {
+          "project_id": "test_edge"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "6cec5203-983a-4b9c-808c-862ae4eec33e"
+        ],
+        "summaries": [
+          "Removed deprecated constant OLD_CODE from src/deprecated.js to clean up unused legacy code"
+        ],
+        "project_id": "test_edge"
+      },
+      "error": null
+    },
+    {
+      "name": "Go - HTTP handler",
+      "category": "Multi-Language",
+      "passed": true,
+      "duration_ms": 21116,
+      "payload": {
+        "file_before": "func handler(w http.ResponseWriter, r *http.Request) {\n\tfmt.Fprintf(w, \"Hello\")\n}",
+        "file_after": "func handler(w http.ResponseWriter, r *http.Request) {\n\tif r.Method != \"GET\" {\n\t\thttp.Error(w, \"Method not allowed\", 405)\n\t\treturn\n\t}\n\tfmt.Fprintf(w, \"Hello\")\n}",
+        "chunks": [
+          {
+            "file_name": "main.go",
+            "file_action": "edit",
+            "line1": 2,
+            "line2": 6,
+            "lines_remove": "\tfmt.Fprintf(w, \"Hello\")",
+            "lines_add": "\tif r.Method != \"GET\" {\n\t\thttp.Error(w, \"Method not allowed\", 405)\n\t\treturn\n\t}\n\tfmt.Fprintf(w, \"Hello\")"
+          }
+        ],
+        "meta": {
+          "project_id": "test_multilang"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "042495db-a92e-4b83-abfc-b3515890372a"
+        ],
+        "summaries": [
+          "Added HTTP method check in main.go to allow only GET requests and return 405 error for others"
+        ],
+        "project_id": "test_multilang"
+      },
+      "error": null
+    },
+    {
+      "name": "Rust - Error handling",
+      "category": "Multi-Language",
+      "passed": true,
+      "duration_ms": 17897,
+      "payload": {
+        "file_before": "fn divide(a: i32, b: i32) -> i32 {\n    a / b\n}",
+        "file_after": "fn divide(a: i32, b: i32) -> Result<i32, String> {\n    if b == 0 {\n        return Err(\"Division by zero\".to_string());\n    }\n    Ok(a / b)\n}",
+        "chunks": [
+          {
+            "file_name": "src/math.rs",
+            "file_action": "edit",
+            "line1": 1,
+            "line2": 5,
+            "lines_remove": "fn divide(a: i32, b: i32) -> i32 {\n    a / b\n}",
+            "lines_add": "fn divide(a: i32, b: i32) -> Result<i32, String> {\n    if b == 0 {\n        return Err(\"Division by zero\".to_string());\n    }\n    Ok(a / b)\n}"
+          }
+        ],
+        "meta": {
+          "project_id": "test_multilang"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "21d84a13-347d-47ad-a3a1-1ff74d75bb8c"
+        ],
+        "summaries": [
+          "Refactored divide function in src/math.rs to return Result and handle division by zero error gracefully"
+        ],
+        "project_id": "test_multilang"
+      },
+      "error": null
+    },
+    {
+      "name": "Java - Exception handling",
+      "category": "Multi-Language",
+      "passed": true,
+      "duration_ms": 17432,
+      "payload": {
+        "file_before": "public void process(String data) {\n    System.out.println(data);\n}",
+        "file_after": "public void process(String data) throws IllegalArgumentException {\n    if (data == null || data.isEmpty()) {\n        throw new IllegalArgumentException(\"Data cannot be null or empty\");\n    }\n    System.out.println(data);\n}",
+        "chunks": [
+          {
+            "file_name": "src/main/java/Processor.java",
+            "file_action": "edit",
+            "line1": 1,
+            "line2": 5,
+            "lines_remove": "public void process(String data) {\n    System.out.println(data);\n}",
+            "lines_add": "public void process(String data) throws IllegalArgumentException {\n    if (data == null || data.isEmpty()) {\n        throw new IllegalArgumentException(\"Data cannot be null or empty\");\n    }\n    System.out.println(data);\n}"
+          }
+        ],
+        "meta": {
+          "project_id": "test_multilang"
+        }
+      },
+      "expected": {
+        "status": "success",
+        "ingested_count": 1
+      },
+      "actual": {
+        "status": "success",
+        "ingested_count": 1,
+        "episode_ids": [
+          "14abdcc5-e842-43b3-9e39-d1009e384864"
+        ],
+        "summaries": [
+          "Added input validation in Processor.java:process() to throw exception on null or empty data for safer processing"
+        ],
+        "project_id": "test_multilang"
+      },
+      "error": null
+    }
+  ]
+}

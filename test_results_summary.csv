@@ -1,0 +1,17 @@
+Category,Test Name,Status,Duration (ms),File,Language
+Python Tests,Python auth service - critical change,PASS,14212,src/auth/auth_service.py,Python
+Python Tests,Python utility - low severity,PASS,14012,src/utils/helpers.py,Python
+Python Tests,Python class - method addition,PASS,18971,src/models/user.py,Python
+JavaScript Tests,JavaScript API - new endpoint,PASS,17452,src/api/users.js,JavaScript
+JavaScript Tests,TypeScript React - component update,PASS,13325,src/components/Header.tsx,tsx
+Severity Tests,Critical - Database schema change,PASS,15130,migrations/001_create_users.sql,sql
+Severity Tests,High - Security vulnerability fix,PASS,13711,src/middleware/security.js,JavaScript
+Severity Tests,Low - README update,PASS,15261,README.md,md
+Severity Tests,Low - Test file update,PASS,17350,tests/test_auth.py,Python
+Edge Cases,Edge - Large refactoring (100+ lines),PASS,16475,src/core/processor.py,Python
+Edge Cases,Edge - Only whitespace changes,PASS,13292,src/hello.py,Python
+Edge Cases,Edge - New file creation,PASS,14528,src/config.js,JavaScript
+Edge Cases,Edge - File deletion,PASS,20252,src/deprecated.js,JavaScript
+Multi-Language,Go - HTTP handler,PASS,15134,main.go,Go
+Multi-Language,Rust - Error handling,PASS,19139,src/math.rs,Rust
+Multi-Language,Java - Exception handling,PASS,14813,src/main/java/Processor.java,Java
