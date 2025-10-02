@@ -70,6 +70,11 @@ class CodeMetadata(BaseModel):
     change_summary: str                       # Human-readable summary (max 500 chars)
     severity: Optional[str] = None            # For bugs: "critical", "high", "medium", "low"
     
+    # Phase 1 Schema Extensions (for CodeFile/CodeChange labels)
+    entity_type: Optional[str] = None         # "code_file" or "code_change" (for Neo4j labels)
+    imports: Optional[List[str]] = None       # List of imported modules/files
+    language: Optional[str] = None            # "python", "javascript", "go", etc.
+    
     # References to external storage (NO code content!)
     code_before_ref: Optional[CodeReference] = None
     code_after_ref: Optional[CodeReference] = None
@@ -102,3 +107,7 @@ class SearchCodeRequest(BaseModel):
     change_type_filter: Optional[str] = None  # Filter by change type: "fixed", "added", etc.
     days_ago: Optional[int] = 2               # Filter by time: default last 2 days
     focal_node_uuid: Optional[str] = None     # Optional focal node for search
+    
+    # Phase 1+ Schema Extension Filters
+    language_filter: Optional[str] = None     # Filter by language: "python", "javascript", etc.
+    entity_type_filter: Optional[str] = None  # Filter by entity type: "code_change" (default), "code_file", etc.

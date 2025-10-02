@@ -163,40 +163,175 @@ async def _set_entity_ttl(
         "expires_at": expires_at.isoformat(),
         "project_id": project_id
     }
-    
     async with graphiti.driver.session() as session:
         result = await session.run(query, params)
         # Consume the result to avoid leaving it in the session
         await result.consume()
 
-async def add_code_metadata(
-    graphiti: Graphiti,
-    entity_uuid: str,
-    metadata: Dict[str, Any]
-) -> Dict[str, Any]:
+async def apply_entity_labels(graphiti, entity_uuid: str, entity_type: str):
     """
-    Add code-specific metadata to an entity
+    Apply custom labels to entity based on entity_type
     
     Args:
         graphiti: Graphiti instance
         entity_uuid: Entity UUID
-        metadata: Dictionary with code metadata fields:
-            - file_path: str
-            - function_name: str
-            - line_start: int
-            - line_end: int
-            - change_type: str
-            - change_summary: str
-            - severity: str
-            - code_before_id: str
-            - code_after_id: str
-            - code_before_hash: str
-            - code_after_hash: str
-            - lines_added: int
-            - lines_removed: int
-            - diff_summary: str
-            - git_commit: str
-            - language: str
+        entity_type: 'code_file', 'code_change', 'module', 'function', 'class', etc.
+    """
+    label_mapping = {
+        'code_file': 'CodeFile',
+        'code_change': 'CodeChange',
+        'module': 'Module',
+        'function': 'Function',
+        'class': 'Class',
+        'test': 'Test',
+        'bug_fix': 'BugFix',
+        'feature': 'Feature',
+        'refactoring': 'Refactoring',
+    }
+    
+    label = label_mapping.get(entity_type)
+    if not label:
+        logger.warning(f"Unknown entity_type: {entity_type}, skipping label")
+        return  # No custom label needed
+    
+    # Add label to entity (keep Entity label, add specific label)
+    query = f"""
+    MATCH (e:Entity {{uuid: $uuid}})
+    SET e:{label}
+    RETURN e.uuid as uuid, labels(e) as labels
+    """
+    
+    async with graphiti.driver.session() as session:
+        result = await session.run(query, {"uuid": entity_uuid})
+        record = await result.single()
+        if record:
+            logger.info(f"✓ Applied label {label} to entity {entity_uuid[:16]}... (labels: {record['labels']})")
+
+
+async def create_relationship(
+    graphiti,
+    from_uuid: str,
+    to_uuid: str,
+    relationship_type: str,
+    properties: Optional[Dict] = None
+):
+    """
+    Create a relationship between two entities
+    
+    Args:
+        graphiti: Graphiti instance
+        from_uuid: Source entity UUID
+        to_uuid: Target entity UUID
+        relationship_type: MODIFIED_IN, IMPORTS, BELONGS_TO, etc.
+        properties: Optional relationship properties
+    """
+    props_str = ""
+    params = {
+        "from_uuid": from_uuid,
+        "to_uuid": to_uuid
+    }
+    
+    if properties:
+        # Build properties string
+        prop_items = []
+        for key, value in properties.items():
+            param_key = f"prop_{key}"
+            prop_items.append(f"{key}: ${param_key}")
+            params[param_key] = value
+        props_str = "{" + ", ".join(prop_items) + "}"
+    
+    query = f"""
+    MATCH (from:Entity {{uuid: $from_uuid}})
+    MATCH (to:Entity {{uuid: $to_uuid}})
+    MERGE (from)-[r:{relationship_type} {props_str}]->(to)
+    RETURN r
+    """
+    
+    try:
+        async with graphiti.driver.session() as session:
+            result = await session.run(query, params)
+            record = await result.single()
+            if record:
+                logger.info(f"✓ Created relationship {relationship_type}: {from_uuid[:8]}...→{to_uuid[:8]}...")
+            return record
+    except Exception as e:
+        logger.error(f"Error creating relationship {relationship_type}: {e}")
+        raise
+
+
+async def find_or_create_file_entity(
+    graphiti,
+    file_path: str,
+    project_id: str,
+    language: str = None,
+    module_name: str = None
+) -> str:
+    """
+    Find existing CodeFile entity or create new one
+    
+    Returns:
+        Entity UUID
+    """
+    # Try to find existing
+    query = """
+    MATCH (f:CodeFile {file_path: $file_path, project_id: $project_id})
+    RETURN f.uuid as uuid
+    LIMIT 1
+    """
+    
+    async with graphiti.driver.session() as session:
+        result = await session.run(query, {
+            "file_path": file_path,
+            "project_id": project_id
+        })
+        record = await result.single()
+        
+        if record:
+            logger.info(f"Found existing CodeFile: {file_path}")
+            return record["uuid"]
+    
+    # Create new file entity
+    import uuid
+    file_uuid = str(uuid.uuid4())
+    
+    create_query = """
+    CREATE (f:Entity:CodeFile {
+        uuid: $uuid,
+        file_path: $file_path,
+        project_id: $project_id,
+        language: $language,
+        module: $module_name,
+        created_at: datetime(),
+        entity_type: 'code_file'
+    })
+    RETURN f.uuid as uuid
+    """
+    
+    async with graphiti.driver.session() as session:
+        result = await session.run(create_query, {
+            "uuid": file_uuid,
+            "file_path": file_path,
+            "project_id": project_id,
+            "language": language,
+            "module_name": module_name
+        })
+        record = await result.single()
+        
+        if record:
+            logger.info(f"✓ Created CodeFile entity: {file_path} ({file_uuid[:8]}...)")
+            return file_uuid
+    
+    return file_uuid
+
+
+async def add_code_metadata(graphiti, entity_uuid: str, metadata: dict) -> dict:
+    """
+    Add code metadata to existing entity
+    
+    Args:
+        graphiti: Graphiti instance
+        entity_uuid: Entity UUID
+        metadata: Dictionary with code metadata fields
     
     Returns:
         Updated entity properties
@@ -223,7 +358,9 @@ async def add_code_metadata(
             "lines_removed": "lines_removed",
             "diff_summary": "diff_summary",
             "git_commit": "git_commit",
-            "language": "language"
+            "language": "language",
+            "entity_type": "entity_type",
+            "imports": "imports"
         }
         
         for key, prop_name in field_mapping.items():

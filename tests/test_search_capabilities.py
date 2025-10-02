@@ -274,7 +274,7 @@ class SearchTestSuite:
                 keywords = [keywords]
             
             for item in result.get('results', []):
-                text = item.get('text', '').lower()
+                text = (item.get('text') or item.get('summary') or item.get('name') or '').lower()
                 if not any(kw.lower() in text for kw in keywords):
                     return False
         
@@ -287,10 +287,11 @@ class SearchTestSuite:
         if result.get('results'):
             item = result['results'][0]
             print(f"  Top result:")
-            print(f"    Text: {item.get('text', '')[:60]}...")
-            print(f"    File: {item.get('file_path', 'N/A')}")
-            print(f"    Severity: {item.get('severity', 'N/A')}")
-            print(f"    Type: {item.get('change_type', 'N/A')}")
+            text = item.get('text') or item.get('summary') or item.get('name') or ''
+            print(f"    Text: {text[:60]}...")
+            print(f"    File: {item.get('file_path') or 'N/A'}")
+            print(f"    Severity: {item.get('severity') or 'N/A'}")
+            print(f"    Type: {item.get('change_type') or 'N/A'}")
     
     def print_search_mismatches(self, result: Dict, expectations: Dict):
         """Print what didn't match"""
@@ -583,6 +584,87 @@ def create_search_tests(suite: SearchTestSuite):
             "min_results": 1,  # At least 1
             "max_results": 20,  # Graphiti creates many
             "file_path_contains": "helpers"
+        }
+    )
+    
+    # ==================== CATEGORY 7: SCHEMA EXTENSIONS ====================
+    
+    # Test 7.1: Search by language filter
+    suite.add_test_case(
+        name="Schema - Python files only",
+        category="Schema Extensions",
+        query={
+            "query": "",
+            "project_id": "search_test_project",
+            "language_filter": "python",
+            "days_ago": 1
+        },
+        expectations={
+            "min_results": 1,  # auth_service.py and helpers.py
+            "required_metadata": ["language"]
+        }
+    )
+    
+    # Test 7.2: Search by language filter - JavaScript
+    suite.add_test_case(
+        name="Schema - JavaScript files only",
+        category="Schema Extensions",
+        query={
+            "query": "",
+            "project_id": "search_test_project",
+            "language_filter": "javascript",
+            "days_ago": 1
+        },
+        expectations={
+            "min_results": 1,  # users.js
+            "required_metadata": ["language"]
+        }
+    )
+    
+    # Test 7.3: Entity type filter - CodeChange only
+    suite.add_test_case(
+        name="Schema - CodeChange entities only",
+        category="Schema Extensions",
+        query={
+            "query": "code",
+            "project_id": "search_test_project",
+            "entity_type_filter": "code_change",
+            "days_ago": 1
+        },
+        expectations={
+            "min_results": 1,
+            "required_metadata": ["entity_type", "file_path"]
+        }
+    )
+    
+    # Test 7.4: Search auth module
+    suite.add_test_case(
+        name="Schema - Auth module search",
+        category="Schema Extensions",
+        query={
+            "query": "authentication login user",
+            "project_id": "search_test_project",
+            "file_filter": "src/auth/auth_service.py",  # Use exact path
+            "days_ago": 1
+        },
+        expectations={
+            "min_results": 1,
+            "file_path_contains": "auth"
+        }
+    )
+    
+    # Test 7.5: Check imports metadata
+    suite.add_test_case(
+        name="Schema - Imports metadata present",
+        category="Schema Extensions",
+        query={
+            "query": "",
+            "project_id": "search_test_project",
+            "days_ago": 1
+        },
+        expectations={
+            "min_results": 1,
+            "required_metadata": ["entity_type", "language"]
         }
     )
 

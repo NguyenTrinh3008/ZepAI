@@ -688,6 +688,14 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
             if meta.severity:
                 metadata_dict["severity"] = meta.severity
             
+            # Phase 1 Schema Extensions
+            if hasattr(meta, 'entity_type') and meta.entity_type:
+                metadata_dict["entity_type"] = meta.entity_type  # 'code_change' for CodeChange label
+            if hasattr(meta, 'imports') and meta.imports:
+                metadata_dict["imports"] = meta.imports  # List of imported modules
+            if hasattr(meta, 'language') and meta.language:
+                metadata_dict["language"] = meta.language  # Programming language
+            
             # Code references
             if meta.code_before_ref:
                 metadata_dict["code_before_id"] = meta.code_before_ref.code_id
@@ -720,6 +728,64 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
                     logger.info(f"✓ Successfully added code metadata to entity {uuid[:16]}...")
                     # Don't use the result - it might contain DateTime objects
                     del result
+                    
+                    # Phase 1: Apply custom labels based on entity_type
+                    if metadata_dict.get('entity_type'):
+                        from app.graph import apply_entity_labels
+                        await apply_entity_labels(graphiti, uuid, metadata_dict['entity_type'])
+                    
+                    # Phase 1+: Create file entity and relationships
+                    if metadata_dict.get('file_path') and metadata_dict.get('entity_type') == 'code_change':
+                        from app.graph import find_or_create_file_entity, create_relationship
+                        
+                        # Find or create CodeFile entity
+                        file_uuid = await find_or_create_file_entity(
+                            graphiti,
+                            file_path=metadata_dict['file_path'],
+                            project_id=payload.project_id,
+                            language=metadata_dict.get('language'),
+                            module_name=metadata_dict.get('file_path').split('/')[0] if '/' in metadata_dict.get('file_path', '') else None
+                        )
+                        
+                        # Create MODIFIED_IN relationship: CodeFile -> CodeChange
+                        await create_relationship(
+                            graphiti,
+                            from_uuid=file_uuid,
+                            to_uuid=uuid,  # CodeChange entity
+                            relationship_type='MODIFIED_IN',
+                            properties={
+                                'timestamp': metadata_dict.get('timestamp'),
+                                'lines_changed': (metadata_dict.get('lines_added', 0) + 
+                                                metadata_dict.get('lines_removed', 0))
+                            }
+                        )
+                        
+                        # Create IMPORTS relationships if imports data exists
+                        if metadata_dict.get('imports'):
+                            for imported_module in metadata_dict['imports']:
+                                # Try to find or create imported file entity
+                                # Note: This is best-effort, might not exist yet
+                                try:
+                                    imported_file_uuid = await find_or_create_file_entity(
+                                        graphiti,
+                                        file_path=imported_module if '.' in imported_module else f"{imported_module}.py",
+                                        project_id=payload.project_id,
+                                        language=metadata_dict.get('language')
+                                    )
+                                    
+                                    # Create IMPORTS relationship: CodeFile -> CodeFile
+                                    await create_relationship(
+                                        graphiti,
+                                        from_uuid=file_uuid,
+                                        to_uuid=imported_file_uuid,
+                                        relationship_type='IMPORTS',
+                                        properties={
+                                            'import_name': imported_module
+                                        }
+                                    )
+                                except Exception as import_error:
+                                    logger.warning(f"Could not create import relationship for {imported_module}: {import_error}")
+                    
                 except Exception as meta_error:
                     logger.error(f"✗ Error adding metadata to {uuid[:16]}...: {str(meta_error)}")
                     import traceback
@@ -815,6 +881,15 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
         filter_conditions = ["e.project_id = $project_id"]
         filter_params = {"project_id": req.project_id}
         
+        # Default: Only return CodeChange entities (exclude Graphiti concept entities)
+        # This ensures results have metadata like severity, change_type
+        # User can override by setting entity_type_filter=None explicitly
+        if req.entity_type_filter is None:
+            filter_conditions.append("e.entity_type = 'code_change'")
+        elif req.entity_type_filter:  # If explicitly set (not empty string)
+            filter_conditions.append("e.entity_type = $entity_type")
+            filter_params["entity_type"] = req.entity_type_filter
+        
         # TTL filter (only active memories OR no TTL set)
         # Some entities might not have TTL (legacy or non-code contexts)
         filter_conditions.append("(e.expires_at IS NULL OR datetime(e.expires_at) > datetime())")
@@ -840,6 +915,14 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
             filter_conditions.append("e.change_type = $change_type")
             filter_params["change_type"] = req.change_type_filter
         
+        # Phase 1+ Schema Extension Filters
+        # Language filter
+        if req.language_filter:
+            filter_conditions.append("e.language = $language")
+            filter_params["language"] = req.language_filter
+        
+        # Entity type filter already handled above (with default)
+        
         # Build complete query
         where_clause = " AND ".join(filter_conditions)
         query = f"""
@@ -858,7 +941,10 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
                e.diff_summary as diff_summary,
                e.lines_added as lines_added,
                e.lines_removed as lines_removed,
-               e.created_at as created_at
+               e.created_at as created_at,
+               e.language as language,
+               e.entity_type as entity_type,
+               e.imports as imports
         """
         
         # Execute filter query
@@ -883,7 +969,10 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
                     "diff_summary": record.get("diff_summary"),
                     "lines_added": record.get("lines_added"),
                     "lines_removed": record.get("lines_removed"),
-                    "created_at": str(record.get("created_at")) if record.get("created_at") else None
+                    "created_at": str(record.get("created_at")) if record.get("created_at") else None,
+                    "language": record.get("language"),
+                    "entity_type": record.get("entity_type"),
+                    "imports": record.get("imports")
                 }
         
         logger.info(f"Project filter: {len(valid_uuids)} valid entities for project {req.project_id}")

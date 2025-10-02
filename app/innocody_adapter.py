@@ -198,6 +198,121 @@ def normalize_change_type(file_action: str) -> str:
     return mapping.get(file_action.lower(), 'updated')
 
 
+def determine_entity_type(chunk: DiffChunk) -> str:
+    """
+    Xác định entity type cho Phase 1 schema extensions
+    
+    Returns:
+        'code_change' - Change event entity (for CodeChange label)
+    
+    Note: We create separate CodeFile entities in create_file_entity()
+    """
+    return 'code_change'
+
+
+def extract_module_name(file_path: str) -> Optional[str]:
+    """
+    Extract module name from file path
+    
+    Examples:
+        src/auth/login.py -> auth
+        src/api/users/service.js -> api.users
+        migrations/001_create.sql -> migrations
+    """
+    parts = file_path.split('/')
+    # Remove filename, keep directory structure
+    if len(parts) <= 1:
+        return None
+    
+    # Remove 'src' prefix if exists
+    dirs = [p for p in parts[:-1] if p not in ['src', 'lib', 'app']]
+    
+    if not dirs:
+        return None
+    
+    return '.'.join(dirs)
+
+
+def create_file_entity(chunk: DiffChunk, language: str) -> Dict[str, Any]:
+    """
+    Create CodeFile entity metadata
+    
+    Returns:
+        Dict with file entity metadata for separate ingestion
+    """
+    module_name = extract_module_name(chunk.file_name)
+    
+    return {
+        "entity_type": "code_file",
+        "file_path": chunk.file_name,
+        "language": language,
+        "module": module_name,
+        "file_action": chunk.file_action,  # For tracking add/remove
+    }
+
+
+def create_module_entity(module_name: str, file_path: str) -> Dict[str, Any]:
+    """
+    Create Module entity metadata
+    
+    Returns:
+        Dict with module entity metadata
+    """
+    # Extract module path (directory)
+    parts = file_path.split('/')
+    module_path = '/'.join(parts[:-1]) + '/'
+    
+    return {
+        "entity_type": "module",
+        "name": module_name,
+        "path": module_path,
+    }
+
+
+def extract_imports(code: str, language: str) -> List[str]:
+    """
+    Extract import statements từ code
+    
+    Args:
+        code: Source code text
+        language: Programming language (python, javascript, etc.)
+    
+    Returns:
+        List of imported module/file names
+    """
+    imports = []
+    
+    if language == 'python':
+        # Python: import x, from x import y
+        import_pattern = r'(?:from|import)\s+([a-zA-Z0-9_.]+)'
+        imports = re.findall(import_pattern, code)
+    
+    elif language in ['javascript', 'typescript']:
+        # JavaScript/TypeScript: import x from 'y', require('y')
+        import_pattern = r'import\s+.*?from\s+[\'"]([^\'"]+)[\'"]'
+        imports.extend(re.findall(import_pattern, code))
+        
+        require_pattern = r'require\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)'
+        imports.extend(re.findall(require_pattern, code))
+    
+    elif language == 'go':
+        # Go: import "package"
+        import_pattern = r'import\s+"([^"]+)"'
+        imports = re.findall(import_pattern, code)
+    
+    elif language == 'java':
+        # Java: import package.Class;
+        import_pattern = r'import\s+([a-zA-Z0-9_.]+)\s*;'
+        imports = re.findall(import_pattern, code)
+    
+    elif language == 'rust':
+        # Rust: use crate::module;
+        import_pattern = r'use\s+([a-zA-Z0-9_:]+)\s*;'
+        imports = re.findall(import_pattern, code)
+    
+    return list(set(imports))  # Remove duplicates
+
+
 async def generate_summary_with_llm(
     chunk: DiffChunk,
     file_before: str,
@@ -332,6 +447,10 @@ async def convert_innocody_to_memory_layer(
         # Extract function name từ context
         function_name = extract_function_name(innocody_response.file_after, chunk.line1)
         
+        # Phase 1 Schema Extensions
+        entity_type = determine_entity_type(chunk)
+        imports = extract_imports(chunk.lines_add, language)
+        
         # Generate summary
         if use_llm_summary:
             summary = await generate_summary_with_llm(
@@ -350,6 +469,7 @@ async def convert_innocody_to_memory_layer(
             "name": name,
             "summary": summary,
             "metadata": {
+                # Core metadata
                 "file_path": chunk.file_name,
                 "function_name": function_name,
                 "line_start": chunk.line1,
@@ -357,6 +477,13 @@ async def convert_innocody_to_memory_layer(
                 "change_type": change_type,
                 "change_summary": summary[:200],  # Truncate for change_summary
                 "severity": severity,
+                
+                # Phase 1 Schema Extensions
+                "entity_type": entity_type,  # 'code_change' for CodeChange label
+                "imports": imports,  # List of imported modules
+                "language": language,
+                
+                # Code references
                 "code_before_ref": {
                     "code_id": f"innocody_{code_before_hash}",
                     "code_hash": code_before_hash,
@@ -369,9 +496,13 @@ async def convert_innocody_to_memory_layer(
                     "language": language,
                     "line_count": lines_add_count
                 } if chunk.lines_add else None,
+                
+                # Change metrics
                 "lines_added": lines_add_count,
                 "lines_removed": lines_remove_count,
                 "diff_summary": f"Added {lines_add_count} lines, removed {lines_remove_count} lines",
+                
+                # Other
                 "git_commit": None,  # Innocody không cung cấp, có thể bổ sung sau
                 "timestamp": datetime.utcnow().isoformat() + "Z"
             },
