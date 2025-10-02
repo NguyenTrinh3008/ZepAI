@@ -16,7 +16,12 @@ from app.cache import (
     cached_with_ttl, cache_search_result, memory_cache, 
     invalidate_search_cache, invalidate_node_cache, get_cache_metrics
 )
+
 app = FastAPI(title="Graphiti Memory Layer")
+
+# Import và register Innocody routes
+from app.innocody_routes import router as innocody_router
+app.include_router(innocody_router)
 
 @app.post("/ingest/text")
 async def ingest_text(payload: IngestText, graphiti=Depends(get_graphiti)):
@@ -363,6 +368,9 @@ async def debug_all_entities(limit: int = 50, graphiti=Depends(get_graphiti)):
                e.name as name, 
                e.project_id as project_id,
                e.group_id as group_id,
+               e.file_path as file_path,
+               e.change_type as change_type,
+               e.severity as severity,
                e.expires_at as expires_at,
                e.created_at as created_at
         ORDER BY e.created_at DESC
@@ -378,6 +386,9 @@ async def debug_all_entities(limit: int = 50, graphiti=Depends(get_graphiti)):
                     "name": record["name"],
                     "project_id": record["project_id"],
                     "group_id": record["group_id"],
+                    "file_path": record["file_path"],
+                    "change_type": record["change_type"],
+                    "severity": record["severity"],
                     "expires_at": str(record["expires_at"]) if record["expires_at"] else None,
                     "created_at": str(record["created_at"]) if record["created_at"] else None
                 })
@@ -386,6 +397,30 @@ async def debug_all_entities(limit: int = 50, graphiti=Depends(get_graphiti)):
             "total": len(entities),
             "entities": entities
         }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/debug/entity/{entity_uuid}")
+async def debug_entity_detail(entity_uuid: str, graphiti=Depends(get_graphiti)):
+    """Debug: Show single entity detail"""
+    try:
+        query = """
+        MATCH (e:Entity {uuid: $uuid})
+        RETURN properties(e) as props
+        """
+        
+        async with graphiti.driver.session() as session:
+            result = await session.run(query, {"uuid": entity_uuid})
+            record = await result.single()
+            
+            if record:
+                return {
+                    "uuid": entity_uuid,
+                    "properties": record["props"]
+                }
+            else:
+                return {"error": "Entity not found"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -577,6 +612,7 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
         await asyncio.sleep(2)  # Give Graphiti time to create entities
         
         # Query Neo4j to find entities created for this group
+        # Widen the time window to 60 seconds to catch entities even with clock skew
         query = """
         MATCH (e:Entity {group_id: $group_id})
         WHERE e.created_at >= datetime($reference_time)
@@ -589,17 +625,32 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
         async with graphiti.driver.session() as session:
             result = await session.run(query, {
                 "group_id": payload.project_id,
-                "reference_time": (ts - __import__('datetime').timedelta(seconds=10)).isoformat()
+                "reference_time": (ts - __import__('datetime').timedelta(seconds=60)).isoformat()
             })
             async for record in result:
                 entity_uuids.append(record["uuid"])
         
         logger.info(f"Found {len(entity_uuids)} entities for group {payload.project_id}")
         
-        # Use first entity UUID
+        # If still not found, try without time filter (just get latest for this group)
+        if not entity_uuids:
+            logger.warning(f"No entities found with time filter, trying without time filter...")
+            query_no_time = """
+            MATCH (e:Entity {group_id: $group_id})
+            RETURN e.uuid as uuid
+            ORDER BY e.created_at DESC
+            LIMIT 5
+            """
+            async with graphiti.driver.session() as session:
+                result = await session.run(query_no_time, {"group_id": payload.project_id})
+                async for record in result:
+                    entity_uuids.append(record["uuid"])
+            logger.info(f"Found {len(entity_uuids)} entities without time filter")
+        
+        # Use first entity UUID for response
         entity_uuid = entity_uuids[0] if entity_uuids else None
         
-        if not entity_uuid:
+        if not entity_uuids:
             logger.warning(f"No entity UUID found for group {payload.project_id}")
         
         # Set TTL and project_id for ALL found entities
@@ -612,8 +663,8 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
                 await _set_entity_ttl(graphiti, uuid, expires_at_dt, payload.project_id)
                 logger.info(f"Set TTL for entity {uuid}")
         
-        # Add code-specific metadata to first entity
-        if entity_uuid:
+        # Add code-specific metadata to ALL entities (not just first!)
+        if entity_uuids:
             logger.info("Building metadata dict...")
             metadata_dict = {}
             
@@ -661,17 +712,21 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
             if meta.git_commit:
                 metadata_dict["git_commit"] = meta.git_commit
             
-            # Add to entity
-            try:
-                result = await add_code_metadata(graphiti, entity_uuid, metadata_dict)
-                logger.info(f"Added code metadata to entity {entity_uuid}")
-                # Don't use the result - it might contain DateTime objects
-                del result
-            except Exception as meta_error:
-                logger.error(f"Error adding metadata: {str(meta_error)}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                # Continue anyway - metadata is optional
+            # Add metadata to ALL entities
+            for idx, uuid in enumerate(entity_uuids, 1):
+                try:
+                    logger.info(f"Setting metadata for entity {idx}/{len(entity_uuids)} ({uuid[:16]}...): {list(metadata_dict.keys())}")
+                    result = await add_code_metadata(graphiti, uuid, metadata_dict)
+                    logger.info(f"✓ Successfully added code metadata to entity {uuid[:16]}...")
+                    # Don't use the result - it might contain DateTime objects
+                    del result
+                except Exception as meta_error:
+                    logger.error(f"✗ Error adding metadata to {uuid[:16]}...: {str(meta_error)}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    # Continue with next entity - metadata is optional
+        else:
+            logger.error(f"✗ SKIPPED metadata setting - no entities found!")
         
         # Invalidate cache
         invalidate_search_cache()
@@ -743,13 +798,22 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
         else:
             results = await graphiti.search(req.query)
         
+        # DEBUG: Inspect first result structure
+        if results and len(results) > 0:
+            first_result = results[0]
+            logger.info(f"Search result type: {type(first_result)}")
+            if isinstance(first_result, dict):
+                logger.info(f"Search result keys: {first_result.keys()}")
+            else:
+                logger.info(f"Search result attrs: {dir(first_result)}")
+        
         # Step 2: Build Neo4j filter query
         filter_conditions = ["e.project_id = $project_id"]
         filter_params = {"project_id": req.project_id}
         
-        # TTL filter (only active memories)
-        filter_conditions.append("e.expires_at IS NOT NULL")
-        filter_conditions.append("datetime(e.expires_at) > datetime()")
+        # TTL filter (only active memories OR no TTL set)
+        # Some entities might not have TTL (legacy or non-code contexts)
+        filter_conditions.append("(e.expires_at IS NULL OR datetime(e.expires_at) > datetime())")
         
         # Time window filter
         if req.days_ago:
@@ -778,6 +842,7 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
         MATCH (e:Entity)
         WHERE {where_clause}
         RETURN e.uuid as uuid,
+               e.name as name,
                e.summary as summary,
                e.file_path as file_path,
                e.function_name as function_name,
@@ -787,6 +852,8 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
                e.code_after_id as code_after_id,
                e.code_after_hash as code_after_hash,
                e.diff_summary as diff_summary,
+               e.lines_added as lines_added,
+               e.lines_removed as lines_removed,
                e.created_at as created_at
         """
         
@@ -800,6 +867,8 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
                 uuid = record["uuid"]
                 valid_uuids.add(uuid)
                 entity_data[uuid] = {
+                    "name": record.get("name"),
+                    "summary": record.get("summary"),
                     "file_path": record.get("file_path"),
                     "function_name": record.get("function_name"),
                     "change_type": record.get("change_type"),
@@ -808,39 +877,38 @@ async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
                     "code_after_id": record.get("code_after_id"),
                     "code_after_hash": record.get("code_after_hash"),
                     "diff_summary": record.get("diff_summary"),
+                    "lines_added": record.get("lines_added"),
+                    "lines_removed": record.get("lines_removed"),
                     "created_at": str(record.get("created_at")) if record.get("created_at") else None
                 }
         
         logger.info(f"Project filter: {len(valid_uuids)} valid entities for project {req.project_id}")
         
-        # Step 3: Filter search results to only valid UUIDs
+        # If no entities match filters, return empty (don't use semantic search)
+        if len(valid_uuids) == 0:
+            logger.warning("No entities found matching project_id and filters")
+            return {
+                "results": [],
+                "count": 0,
+                "project_id": req.project_id
+            }
+        
+        # Step 3: Return entities directly (bypass Graphiti search for now)
+        # Graphiti search may return Edges/Facts instead of Entities
+        # So we return the filtered entities directly
         filtered_results = []
-        for item in results:
-            # Extract UUID from search result
-            if isinstance(item, dict):
-                item_uuid = item.get("source_node_uuid") or item.get("uuid") or item.get("node_uuid")
-            else:
-                item_uuid = getattr(item, "source_node_uuid", None) or getattr(item, "uuid", None)
-            
-            if item_uuid in valid_uuids:
-                # Get text from search result
-                if isinstance(item, dict):
-                    text = item.get("fact") or item.get("text") or item.get("summary") or str(item)
-                else:
-                    text = getattr(item, "fact", None) or getattr(item, "text", None) or getattr(item, "summary", None) or str(item)
-                
-                # Build result with metadata
-                result_item = {
-                    "text": text,
-                    "id": item_uuid,
-                    "project_id": req.project_id,
-                }
-                
-                # Add entity data if available
-                if item_uuid in entity_data:
-                    result_item.update(entity_data[item_uuid])
-                
-                filtered_results.append(result_item)
+        for uuid, data in entity_data.items():
+            result_item = {
+                "text": data.get("summary") or data.get("name", ""),
+                "id": uuid,
+                "project_id": req.project_id,
+            }
+            # Merge all metadata
+            result_item.update(data)
+            filtered_results.append(result_item)
+        
+        # Sort by created_at desc
+        filtered_results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         
         logger.info(f"Filtered to {len(filtered_results)} results matching all criteria")
         
