@@ -1,24 +1,28 @@
+# app/importance.py
 """
-Importance scoring for memory facts
-Score facts by their relevance and usefulness (0.0 - 1.0)
+LLM-Only Importance Scoring
+
+Uses OpenAI to score:
+1. Conversation facts
+2. Code changes
+
+Requires OPENAI_API_KEY in .env file
 """
 
 import os
 from openai import OpenAI
-from typing import Dict
+from typing import Dict, Optional
+from dotenv import load_dotenv
 
-# Importance categories with base scores
-IMPORTANCE_CATEGORIES = {
-    "identity": 1.0,       # Name, age, location, personal info
-    "preference": 0.8,     # Likes, dislikes, interests  
-    "knowledge": 0.7,      # Learned topics, understanding
-    "action": 0.6,         # Things done, completed tasks
-    "opinion": 0.5,        # Views, thoughts on topics
-    "question": 0.3,       # Questions asked
-    "greeting": 0.1,       # Small talk, greetings
-}
+# Load environment variables
+load_dotenv()
 
-IMPORTANCE_SCORING_PROMPT = """Classify this fact's importance category and score.
+
+# =============================================================================
+# Prompts
+# =============================================================================
+
+CONVERSATION_PROMPT = """Classify this fact's importance category and score.
 
 **Fact:** "{fact}"
 
@@ -53,109 +57,253 @@ Fact: "User said hello"
 **Your classification:**"""
 
 
-class ImportanceScorer:
-    """Score facts by importance for retrieval prioritization"""
+CODE_PROMPT = """Score this code change's importance.
+
+**Code Change:**
+- Type: {change_type}
+- File: {file_path}
+- Severity: {severity}
+- Summary: {summary}
+
+**Categories (score):**
+- critical_bug (1.0): Security vulnerabilities, data loss risks, system crashes
+- architecture (0.95): Major design decisions, migrations, framework changes
+- breaking_change (0.9): API incompatibilities, major refactors affecting users
+- major_feature (0.85): Significant new capabilities, major improvements
+- bug_fix (0.75): Standard bug fixes, error corrections
+- refactor (0.7): Code improvements, optimization, restructuring
+- minor_feature (0.6): Small additions, minor improvements
+- optimization (0.55): Performance improvements, efficiency gains
+- documentation (0.4): Documentation updates, comments
+- style (0.2): Formatting, linting, code style changes
+
+**Guidelines:**
+- Security issues → critical_bug (1.0)
+- Core files (auth, database, API) → higher importance
+- Breaking changes → breaking_change (0.9)
+- High severity + fix → bug_fix or critical_bug
+- Architecture/design changes → architecture (0.95)
+
+**Examples:**
+
+Change: fixed, auth/security.py, critical, "SQL injection vulnerability"
+→ critical_bug|1.0
+
+Change: added, api/routes.py, high, "New payment processing endpoint"
+→ major_feature|0.85
+
+Change: refactored, utils/helper.py, low, "Code formatting"
+→ style|0.2
+
+Change: fixed, api/middleware.py, medium, "Timeout error in requests"
+→ bug_fix|0.75
+
+**Output format:** category|score
+
+**Your classification:**"""
+
+
+# =============================================================================
+# Scorer Class
+# =============================================================================
+
+class LLMImportanceScorer:
+    """LLM-only importance scorer (requires OpenAI API key)"""
     
-    def __init__(self, api_key: str = None):
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        self.model = os.getenv("MODEL_NAME", "gpt-4o-mini")
-    
-    async def score_fact(self, fact: str) -> Dict[str, float]:
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini"):
         """
-        Score a fact's importance
+        Initialize LLM scorer
         
-        Returns:
-            {
-                "category": "identity|preference|knowledge|...",
-                "score": 0.0-1.0,
-                "reasoning": "why this category"
-            }
+        Args:
+            api_key: OpenAI API key (optional, uses OPENAI_API_KEY env var)
+            model: Model name (default: gpt-4o-mini)
+        
+        Raises:
+            ValueError: If no API key found
         """
-        try:
-            prompt = IMPORTANCE_SCORING_PROMPT.format(fact=fact)
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,  # Low for consistent scoring
-                max_tokens=50,
+        key = api_key or os.getenv("OPENAI_API_KEY")
+        if not key:
+            raise ValueError(
+                "OpenAI API key required. "
+                "Set OPENAI_API_KEY environment variable or pass api_key parameter."
             )
-            
-            result = response.choices[0].message.content.strip()
-            
-            # Parse "category|score"
-            if "|" in result:
-                category, score_str = result.split("|", 1)
-                category = category.strip().lower()
-                score = float(score_str.strip())
-                
-                return {
-                    "category": category,
-                    "score": score,
-                    "reasoning": f"Classified as {category}"
-                }
-            else:
-                # Fallback to default
-                return {
-                    "category": "knowledge",
-                    "score": 0.7,
-                    "reasoning": "Default score (parsing failed)"
-                }
-                
-        except Exception as e:
-            # Fallback to heuristic scoring
-            return self._heuristic_score(fact)
+        
+        self.client = OpenAI(api_key=key)
+        self.model = model
     
-    def _heuristic_score(self, fact: str) -> Dict[str, float]:
-        """Fast heuristic scoring without LLM call"""
-        fact_lower = fact.lower()
-        
-        # Identity keywords
-        if any(kw in fact_lower for kw in ["name is", "called", "age", "from", "live in", "work at"]):
-            return {"category": "identity", "score": 1.0, "reasoning": "Contains identity keywords"}
-        
-        # Preference keywords
-        if any(kw in fact_lower for kw in ["like", "prefer", "favorite", "enjoy", "hate", "dislike"]):
-            return {"category": "preference", "score": 0.8, "reasoning": "Contains preference keywords"}
-        
-        # Knowledge keywords
-        if any(kw in fact_lower for kw in ["learned", "understand", "know", "studied", "mastered"]):
-            return {"category": "knowledge", "score": 0.7, "reasoning": "Contains learning keywords"}
-        
-        # Action keywords
-        if any(kw in fact_lower for kw in ["completed", "built", "created", "developed", "implemented"]):
-            return {"category": "action", "score": 0.6, "reasoning": "Contains action keywords"}
-        
-        # Greeting keywords
-        if any(kw in fact_lower for kw in ["hello", "hi", "said goodbye", "greeted"]):
-            return {"category": "greeting", "score": 0.1, "reasoning": "Greeting/small talk"}
-        
-        # Default: opinion/generic
-        return {"category": "opinion", "score": 0.5, "reasoning": "Default heuristic score"}
+    # Aliases for backward compatibility
+    async def score_fact(self, fact: str) -> Dict[str, float]:
+        """Alias for score_conversation"""
+        return await self.score_conversation(fact)
+    
+    async def score_code_memory_llm(self, **kwargs) -> Dict[str, float]:
+        """Alias for score_code_change"""
+        return await self.score_code_change(**kwargs)
     
     def should_ingest(self, fact: str, threshold: float = 0.3) -> tuple[bool, Dict]:
         """
-        Determine if fact should be ingested based on importance
+        Synchronous wrapper to check if fact should be ingested
         
         Args:
             fact: The fact to evaluate
-            threshold: Minimum importance score (default 0.3)
+            threshold: Minimum score to ingest (default: 0.3)
             
         Returns:
             (should_ingest: bool, score_info: dict)
         """
-        score_info = self._heuristic_score(fact)
-        should_ingest = score_info["score"] >= threshold
+        import asyncio
         
-        return should_ingest, score_info
+        try:
+            # Run async score_conversation in sync context
+            result = asyncio.run(self.score_conversation(fact))
+            score = result['score']
+            should_ingest = score >= threshold
+            
+            return should_ingest, result
+        except Exception as e:
+            # On error, default to ingesting with neutral score
+            return True, {
+                "category": "unknown",
+                "score": 0.5,
+                "reasoning": f"Error: {e}"
+            }
+    
+    async def score_conversation(self, fact: str) -> Dict[str, float]:
+        """
+        Score a conversation fact using LLM
+        
+        Args:
+            fact: The fact to score
+            
+        Returns:
+            {
+                "category": str,
+                "score": float (0.0-1.0),
+                "reasoning": str
+            }
+        """
+        prompt = CONVERSATION_PROMPT.format(fact=fact)
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=50,
+        )
+        
+        result = response.choices[0].message.content.strip()
+        
+        # Parse "category|score"
+        if "|" in result:
+            category, score_str = result.split("|", 1)
+            category = category.strip().lower()
+            score = float(score_str.strip())
+            
+            return {
+                "category": category,
+                "score": round(score, 3),
+                "reasoning": f"LLM: {category}"
+            }
+        else:
+            # Default if parsing fails
+            return {
+                "category": "opinion",
+                "score": 0.5,
+                "reasoning": "LLM parse error - default score"
+            }
+    
+    async def score_code_change(self,
+                               change_type: str,
+                               severity: Optional[str] = None,
+                               file_path: Optional[str] = None,
+                               summary: Optional[str] = None) -> Dict[str, float]:
+        """
+        Score a code change using LLM
+        
+        Args:
+            change_type: Type of change (fixed, added, refactored, removed)
+            severity: Severity level (critical, high, medium, low)
+            file_path: File path
+            summary: Change summary text
+            
+        Returns:
+            {
+                "category": str,
+                "score": float (0.0-1.0),
+                "reasoning": str
+            }
+        """
+        prompt = CODE_PROMPT.format(
+            change_type=change_type or "unknown",
+            file_path=file_path or "unknown",
+            severity=severity or "medium",
+            summary=summary or "No description"
+        )
+        
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=50,
+        )
+        
+        result = response.choices[0].message.content.strip()
+        
+        # Parse "category|score"
+        if "|" in result:
+            category, score_str = result.split("|", 1)
+            category = category.strip().lower()
+            score = float(score_str.strip())
+            
+            return {
+                "category": category,
+                "score": round(score, 3),
+                "reasoning": f"LLM: {category}"
+            }
+        else:
+            # Default if parsing fails
+            return {
+                "category": "minor_feature",
+                "score": 0.6,
+                "reasoning": "LLM parse error - default score"
+            }
 
 
-# Singleton instance
+# =============================================================================
+# Singleton
+# =============================================================================
+
 _scorer = None
 
-def get_scorer() -> ImportanceScorer:
-    """Get global importance scorer instance"""
+def get_scorer(api_key: Optional[str] = None) -> LLMImportanceScorer:
+    """Get global LLM scorer instance"""
     global _scorer
     if _scorer is None:
-        _scorer = ImportanceScorer()
+        _scorer = LLMImportanceScorer(api_key=api_key)
     return _scorer
+
+
+# =============================================================================
+# Convenience Functions
+# =============================================================================
+
+async def score_fact(fact: str) -> float:
+    """Quick function to score a conversation fact"""
+    scorer = get_scorer()
+    result = await scorer.score_conversation(fact)
+    return result["score"]
+
+
+async def score_code(change_type: str,
+                    severity: Optional[str] = None,
+                    file_path: Optional[str] = None,
+                    summary: Optional[str] = None) -> float:
+    """Quick function to score a code change"""
+    scorer = get_scorer()
+    result = await scorer.score_code_change(
+        change_type=change_type,
+        severity=severity,
+        file_path=file_path,
+        summary=summary
+    )
+    return result["score"]

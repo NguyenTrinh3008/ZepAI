@@ -610,6 +610,494 @@ with tabs[1]:
                     else:
                         st.error("Failed to ingest JSON")
                         st.json(data)
+    
+    with st.expander("💻 Ingest Code Change", expanded=True):
+        st.markdown("**Track code commits, bug fixes, refactors with LLM importance scoring**")
+        
+        with st.form("ingest_code_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                code_project_id = st.text_input("Project ID", value="my_project", key="code_proj")
+                code_name = st.text_input("Name", value="fix_auth", key="code_name")
+                code_change_type = st.selectbox(
+                    "Change Type", 
+                    ["fixed", "added", "refactored", "removed", "updated"],
+                    key="code_type"
+                )
+            
+            with col2:
+                code_severity = st.selectbox(
+                    "Severity",
+                    ["critical", "high", "medium", "low"],
+                    index=2,
+                    key="code_sev"
+                )
+                code_file_path = st.text_input("File Path", value="src/auth/login.py", key="code_file")
+            
+            code_summary = st.text_area(
+                "Summary (describe what was changed)",
+                value="Fixed SQL injection vulnerability in user login endpoint",
+                height=100,
+                key="code_summary"
+            )
+            
+            code_submitted = st.form_submit_button("🚀 Ingest Code Change")
+            
+            if code_submitted:
+                payload = {
+                    "project_id": code_project_id,
+                    "name": code_name,
+                    "change_type": code_change_type,
+                    "severity": code_severity,
+                    "file_path": code_file_path,
+                    "summary": code_summary,
+                }
+                
+                with st.spinner("Scoring importance with LLM..."):
+                    ok, data = post_json("/ingest/code", payload)
+                
+                if ok:
+                    st.success("✅ Code change ingested!")
+                    
+                    # Show importance score
+                    if "importance_score" in data:
+                        score = data["importance_score"]
+                        category = data.get("category", "unknown")
+                        
+                        col_a, col_b, col_c = st.columns(3)
+                        with col_a:
+                            st.metric("Importance Score", f"{score:.2f}")
+                        with col_b:
+                            st.metric("Category", category)
+                        with col_c:
+                            episode_uuid = data.get("episode_uuid", "N/A")[:12]
+                            st.metric("Episode ID", episode_uuid)
+                        
+                        # Color-coded alert based on score
+                        if score >= 0.9:
+                            st.error(f"🔴 **CRITICAL**: This is a high-priority change!")
+                        elif score >= 0.7:
+                            st.warning(f"🟡 **IMPORTANT**: This change is significant")
+                        else:
+                            st.info(f"🟢 **NORMAL**: Standard code change")
+                    
+                    with st.expander("📄 Full Response"):
+                        st.json(data)
+                else:
+                    st.error("❌ Failed to ingest code")
+                    st.json(data)
+        
+        # Quick test examples
+        st.markdown("### 📝 Quick Test Examples")
+        st.caption("Click to copy, then paste into form above:")
+        
+        examples = [
+            {
+                "name": "Critical Security Fix",
+                "summary": "Fixed SQL injection vulnerability allowing unauthorized database access",
+                "change_type": "fixed",
+                "severity": "critical",
+                "file_path": "src/auth/database.py"
+            },
+            {
+                "name": "New Payment Feature",
+                "summary": "Integrated Stripe payment gateway with webhook support",
+                "change_type": "added",
+                "severity": "high",
+                "file_path": "src/api/payment.py"
+            },
+            {
+                "name": "Code Formatting",
+                "summary": "Applied black formatter to entire codebase",
+                "change_type": "refactored",
+                "severity": "low",
+                "file_path": "**/*.py"
+            }
+        ]
+        
+        for idx, ex in enumerate(examples, 1):
+            with st.expander(f"Example {idx}: {ex['name']}", expanded=False):
+                st.code(f"""
+Project ID: my_project
+Name: {ex['name'].lower().replace(' ', '_')}
+Change Type: {ex['change_type']}
+Severity: {ex['severity']}
+File Path: {ex['file_path']}
+Summary: {ex['summary']}
+                """, language=None)
+    
+    with st.expander("🔧 Ingest Code Context (Complex Schema)", expanded=False):
+        st.markdown("**Full metadata tracking for production systems - Git hooks, IDE plugins**")
+        st.caption("⚠️ This is for advanced use cases with detailed code tracking")
+        
+        with st.form("ingest_code_context_form"):
+            st.markdown("#### Basic Info")
+            col_basic1, col_basic2 = st.columns(2)
+            
+            with col_basic1:
+                ctx_project_id = st.text_input("Project ID", value="project_abc123", key="ctx_proj")
+                ctx_name = st.text_input("Change Name", value="Fixed login null pointer bug", key="ctx_name")
+            
+            with col_basic2:
+                ctx_ref_time = st.text_input(
+                    "Reference Time (ISO)", 
+                    value=datetime.utcnow().isoformat(), 
+                    key="ctx_ref_time"
+                )
+            
+            ctx_summary = st.text_area(
+                "Summary (detailed description)",
+                value="Fixed null pointer exception in auth_service.py:login_user() function by adding null check before accessing user.token attribute. This prevents AttributeError when token is None.",
+                height=100,
+                key="ctx_summary"
+            )
+            
+            st.markdown("#### Metadata - Location")
+            col_loc1, col_loc2, col_loc3 = st.columns(3)
+            
+            with col_loc1:
+                ctx_file_path = st.text_input("File Path", value="src/auth/auth_service.py", key="ctx_file")
+            with col_loc2:
+                ctx_function = st.text_input("Function Name (optional)", value="login_user", key="ctx_func")
+            with col_loc3:
+                col_line1, col_line2 = st.columns(2)
+                with col_line1:
+                    ctx_line_start = st.number_input("Line Start", value=45, min_value=1, key="ctx_line_start")
+                with col_line2:
+                    ctx_line_end = st.number_input("Line End", value=52, min_value=1, key="ctx_line_end")
+            
+            st.markdown("#### Metadata - Change Details")
+            col_change1, col_change2, col_change3 = st.columns(3)
+            
+            with col_change1:
+                ctx_change_type = st.selectbox(
+                    "Change Type",
+                    ["fixed", "added", "refactored", "removed", "updated"],
+                    key="ctx_change_type"
+                )
+            with col_change2:
+                ctx_severity = st.selectbox(
+                    "Severity",
+                    ["critical", "high", "medium", "low"],
+                    index=1,
+                    key="ctx_severity"
+                )
+            with col_change3:
+                ctx_language = st.text_input("Language", value="python", key="ctx_lang")
+            
+            ctx_change_summary = st.text_input(
+                "Change Summary",
+                value="Added null validation",
+                key="ctx_change_sum"
+            )
+            
+            st.markdown("#### Code References (NOT actual code - just metadata)")
+            col_ref1, col_ref2 = st.columns(2)
+            
+            with col_ref1:
+                st.markdown("**Before:**")
+                ctx_code_before_id = st.text_input("Code ID (before)", value="code_xyz123", key="ctx_before_id")
+                ctx_code_before_hash = st.text_input("Code Hash (before)", value="a3f5c8d2e9f1b4a7", key="ctx_before_hash")
+                ctx_before_lines = st.number_input("Line Count (before)", value=5, min_value=0, key="ctx_before_lines")
+            
+            with col_ref2:
+                st.markdown("**After:**")
+                ctx_code_after_id = st.text_input("Code ID (after)", value="code_xyz456", key="ctx_after_id")
+                ctx_code_after_hash = st.text_input("Code Hash (after)", value="b7e9d1a3c5f2b8d4", key="ctx_after_hash")
+                ctx_after_lines = st.number_input("Line Count (after)", value=8, min_value=0, key="ctx_after_lines")
+            
+            st.markdown("#### Diff & Git Info")
+            col_diff1, col_diff2, col_diff3 = st.columns(3)
+            
+            with col_diff1:
+                ctx_lines_added = st.number_input("Lines Added", value=3, min_value=0, key="ctx_added")
+            with col_diff2:
+                ctx_lines_removed = st.number_input("Lines Removed", value=1, min_value=0, key="ctx_removed")
+            with col_diff3:
+                ctx_git_commit = st.text_input("Git Commit Hash", value="abc123def456", key="ctx_git")
+            
+            ctx_diff_summary = st.text_input(
+                "Diff Summary",
+                value="Added 3 lines for null check, removed 1 line",
+                key="ctx_diff_sum"
+            )
+            
+            ctx_submitted = st.form_submit_button("🚀 Ingest Code Context (Complex)", type="primary")
+            
+            if ctx_submitted:
+                # Build complex payload
+                payload = {
+                    "name": ctx_name,
+                    "summary": ctx_summary,
+                    "project_id": ctx_project_id,
+                    "reference_time": ctx_ref_time,
+                    "metadata": {
+                        "file_path": ctx_file_path,
+                        "function_name": ctx_function if ctx_function else None,
+                        "line_start": int(ctx_line_start),
+                        "line_end": int(ctx_line_end),
+                        "change_type": ctx_change_type,
+                        "change_summary": ctx_change_summary,
+                        "severity": ctx_severity,
+                        "code_before_ref": {
+                            "code_id": ctx_code_before_id,
+                            "code_hash": ctx_code_before_hash,
+                            "language": ctx_language,
+                            "line_count": int(ctx_before_lines)
+                        } if ctx_code_before_id else None,
+                        "code_after_ref": {
+                            "code_id": ctx_code_after_id,
+                            "code_hash": ctx_code_after_hash,
+                            "language": ctx_language,
+                            "line_count": int(ctx_after_lines)
+                        } if ctx_code_after_id else None,
+                        "lines_added": int(ctx_lines_added),
+                        "lines_removed": int(ctx_lines_removed),
+                        "diff_summary": ctx_diff_summary,
+                        "git_commit": ctx_git_commit if ctx_git_commit else None,
+                        "timestamp": ctx_ref_time
+                    }
+                }
+                
+                with st.spinner("Ingesting code context with full metadata..."):
+                    ok, data = post_json("/ingest/code-context", payload)
+                
+                if ok:
+                    st.success("✅ Code context ingested successfully!")
+                    
+                    col_res1, col_res2 = st.columns(2)
+                    with col_res1:
+                        # API returns "episode_id" not "episode_uuid"
+                        episode_id = data.get("episode_id", data.get("episode_uuid", "N/A"))
+                        if episode_id != "N/A":
+                            st.metric("Episode ID", episode_id[:16] + "...")
+                        else:
+                            st.metric("Episode ID", "N/A")
+                    with col_res2:
+                        expires_at = data.get("expires_at", "N/A")
+                        if expires_at != "N/A":
+                            # Show TTL in human-readable format
+                            from datetime import datetime
+                            try:
+                                exp_time = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                                st.metric("Expires At", exp_time.strftime("%Y-%m-%d %H:%M"))
+                            except:
+                                st.metric("Expires (48h)", "2 days")
+                        else:
+                            st.metric("TTL", "48 hours")
+                    
+                    st.info("💡 **Tip:** Entities are being extracted by Graphiti AI in background. Check Neo4j browser in 5-10 seconds to see the full graph with entities and relationships!")
+                    
+                    with st.expander("📄 Full Response"):
+                        st.json(data)
+                else:
+                    st.error("❌ Failed to ingest code context")
+                    st.json(data)
+        
+        st.markdown("---")
+        st.markdown("### 📋 Complex Schema Use Cases")
+        st.markdown("""
+        **When to use:**
+        - ✅ IDE plugins (auto-track code changes)
+        - ✅ Git hooks (post-commit metadata)
+        - ✅ CI/CD pipelines (deployment tracking)
+        - ✅ Code review systems (change analysis)
+        
+        **What gets stored:**
+        - File path, function name, line numbers
+        - Code hashes (NOT actual code)
+        - Diff statistics (lines added/removed)
+        - Git metadata (commit hash, branch)
+        - Timestamps and relationships
+        
+        **What does NOT get stored:**
+        - ❌ Actual source code (only references)
+        - ❌ Sensitive data
+        - ❌ Large binaries
+        """)
+    
+    with st.expander("🚀 Bulk Test - Ingest Multiple Code Changes", expanded=False):
+        st.markdown("**Paste JSON array of code changes for quick testing**")
+        
+        # Default test cases
+        default_test_cases = [
+            {
+                "project_id": "payment_system",
+                "name": "fix_sql_injection",
+                "change_type": "fixed",
+                "severity": "critical",
+                "file_path": "src/auth/database.py",
+                "summary": "Fixed SQL injection vulnerability allowing unauthorized database access"
+            },
+            {
+                "project_id": "payment_system",
+                "name": "stripe_integration",
+                "change_type": "added",
+                "severity": "high",
+                "file_path": "src/api/payment.py",
+                "summary": "Integrated Stripe payment gateway with webhook support"
+            },
+            {
+                "project_id": "payment_system",
+                "name": "optimize_queries",
+                "change_type": "refactored",
+                "severity": "medium",
+                "file_path": "src/db/repository.py",
+                "summary": "Optimized database queries reducing response time by 40%"
+            },
+            {
+                "project_id": "payment_system",
+                "name": "code_format",
+                "change_type": "refactored",
+                "severity": "low",
+                "file_path": "**/*.py",
+                "summary": "Applied black formatter to entire codebase"
+            },
+            {
+                "project_id": "user_service",
+                "name": "fix_memory_leak",
+                "change_type": "fixed",
+                "severity": "high",
+                "file_path": "src/session/handler.py",
+                "summary": "Fixed memory leak in user session management"
+            }
+        ]
+        
+        bulk_input = st.text_area(
+            "JSON Array (one change per object)",
+            value=json.dumps(default_test_cases, indent=2),
+            height=300,
+            key="bulk_code_input"
+        )
+        
+        col_bulk1, col_bulk2 = st.columns([1, 3])
+        
+        with col_bulk1:
+            if st.button("🚀 Ingest All", key="bulk_ingest_btn", type="primary"):
+                try:
+                    changes = json.loads(bulk_input)
+                    
+                    if not isinstance(changes, list):
+                        st.error("Input must be a JSON array!")
+                    else:
+                        st.info(f"📝 Ingesting {len(changes)} code changes...")
+                        
+                        results = []
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        for idx, change in enumerate(changes):
+                            status_text.text(f"Processing {idx+1}/{len(changes)}: {change.get('name', 'unknown')}")
+                            
+                            ok, data = post_json("/ingest/code", change)
+                            
+                            results.append({
+                                "name": change.get("name"),
+                                "success": ok,
+                                "score": data.get("importance_score") if ok else None,
+                                "category": data.get("category") if ok else None,
+                                "error": data.get("error") if not ok else None
+                            })
+                            
+                            progress_bar.progress((idx + 1) / len(changes))
+                        
+                        status_text.empty()
+                        
+                        # Summary
+                        success_count = sum(1 for r in results if r["success"])
+                        fail_count = len(results) - success_count
+                        
+                        if fail_count == 0:
+                            st.success(f"✅ All {success_count} changes ingested successfully!")
+                        else:
+                            st.warning(f"⚠️ {success_count} succeeded, {fail_count} failed")
+                        
+                        # Results table
+                        st.markdown("### 📊 Results")
+                        for r in results:
+                            if r["success"]:
+                                score = r["score"]
+                                category = r["category"]
+                                
+                                # Color-coded icon
+                                if score >= 0.9:
+                                    icon = "🔴"
+                                elif score >= 0.7:
+                                    icon = "🟡"
+                                else:
+                                    icon = "🟢"
+                                
+                                st.markdown(f"{icon} **{r['name']}**: Score={score:.2f}, Category={category}")
+                            else:
+                                st.markdown(f"❌ **{r['name']}**: {r['error']}")
+                        
+                        # Full JSON
+                        with st.expander("📄 Full Results JSON"):
+                            st.json(results)
+                        
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON: {e}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        with col_bulk2:
+            st.markdown("**💡 Quick Tips:**")
+            st.caption("- Each object = one code change")
+            st.caption("- All fields required: project_id, name, change_type, severity, file_path, summary")
+            st.caption("- LLM will score each change automatically")
+            st.caption("- Results show color-coded importance")
+        
+        st.markdown("---")
+        st.markdown("### 📝 More Test Templates")
+        
+        col_t1, col_t2 = st.columns(2)
+        
+        with col_t1:
+            if st.button("Load: Security Fixes", key="template_security"):
+                template = [
+                    {
+                        "project_id": "security_audit",
+                        "name": "fix_xss",
+                        "change_type": "fixed",
+                        "severity": "critical",
+                        "file_path": "src/templates/render.py",
+                        "summary": "Fixed XSS vulnerability in HTML template rendering"
+                    },
+                    {
+                        "project_id": "security_audit",
+                        "name": "fix_csrf",
+                        "change_type": "fixed",
+                        "severity": "high",
+                        "file_path": "src/api/middleware.py",
+                        "summary": "Added CSRF token validation to all POST endpoints"
+                    }
+                ]
+                st.session_state["bulk_code_input"] = json.dumps(template, indent=2)
+                st.rerun()
+        
+        with col_t2:
+            if st.button("Load: New Features", key="template_features"):
+                template = [
+                    {
+                        "project_id": "feature_dev",
+                        "name": "oauth_integration",
+                        "change_type": "added",
+                        "severity": "high",
+                        "file_path": "src/auth/oauth.py",
+                        "summary": "Implemented OAuth2 authentication with Google and GitHub"
+                    },
+                    {
+                        "project_id": "feature_dev",
+                        "name": "websocket_support",
+                        "change_type": "added",
+                        "severity": "medium",
+                        "file_path": "src/api/websocket.py",
+                        "summary": "Added WebSocket support for real-time notifications"
+                    }
+                ]
+                st.session_state["bulk_code_input"] = json.dumps(template, indent=2)
+                st.rerun()
 
     st.caption("Tip: Set environment variable MEMORY_LAYER_API to point to a different API base URL.")
 

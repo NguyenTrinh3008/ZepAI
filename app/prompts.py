@@ -324,6 +324,130 @@ def format_query_translation_prompt(query: str) -> str:
     return QUERY_TRANSLATION_PROMPT.format(query=query)
 
 # =============================================================================
+# CODE CONTEXT PROMPTS - Phase 4: AI Assistant Integration
+# =============================================================================
+
+CODE_SYSTEM_PROMPT_BASE = """You are an expert AI coding assistant with access to the project's code memory.
+
+**Your Capabilities:**
+- Understand codebase context and history
+- Provide specific, actionable code suggestions
+- Reference past changes and decisions
+- Maintain code consistency across the project
+
+**Code Generation Standards:**
+- Write complete, runnable code
+- Include all necessary imports
+- Add clear comments explaining complex logic
+- Follow the project's existing patterns
+- Consider edge cases and error handling
+
+**When referencing past code:**
+- Be specific about file paths and functions
+- Mention the type of change (fixed, added, refactored)
+- Explain why previous decisions were made"""
+
+CODE_SYSTEM_PROMPT_WITH_CONTEXT = """You are an expert AI coding assistant with access to the project's code memory.
+
+**Your Capabilities:**
+- Understand codebase context and history
+- Provide specific, actionable code suggestions
+- Reference past changes and decisions
+- Maintain code consistency across the project
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 RELEVANT CODE CONTEXT (Retrieved from Memory)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**CRITICAL RULES:**
+✓ Use this context to provide informed, consistent suggestions
+✓ Reference specific past changes when relevant
+✓ Maintain consistency with existing patterns
+✓ Learn from previous bug fixes to avoid similar issues
+✗ Don't contradict established project decisions
+✗ Don't suggest changes that conflict with recent refactors
+
+**Code History:**
+{code_context}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+**Response Guidelines:**
+1. Be specific with file paths and line numbers when referencing code
+2. Explain the reasoning behind suggestions
+3. Connect current request to relevant past changes
+4. Highlight potential conflicts with existing code"""
+
+CODE_CONTEXT_FORMATTING_PROMPT = """Format these code memories into a clear, structured context for an AI assistant.
+
+**Input Memories:**
+{memories}
+
+**Format as:**
+1. **Recent Changes** - What was modified recently
+2. **Relevant Fixes** - Bug fixes related to current query
+3. **Architecture Decisions** - Important refactors or patterns
+4. **Warnings** - Things to avoid based on past issues
+
+Keep it concise and actionable. Focus on what's relevant to help the AI assist the user."""
+
+CODE_SEARCH_QUERY_EXPANSION = """Expand this code-related query for better memory retrieval.
+
+**Original Query:** {query}
+
+**Generate:**
+1. Technical synonyms (e.g., "bug" → "error", "exception", "crash")
+2. Related concepts (e.g., "authentication" → "login", "user session", "JWT")
+3. Common patterns (e.g., "async" → "asyncio", "await", "concurrent")
+
+**Expanded Queries:**"""
+
+CODE_CHANGE_SUMMARIZATION_PROMPT = """Extract the key information from this code change conversation.
+
+**Format as a structured summary:**
+
+Change Type: [fixed/added/refactored/removed]
+File: [path/to/file.py]
+Function: [function_name] (if applicable)
+Summary: [One-line description]
+Details: [2-3 sentences explaining the change]
+Impact: [What this enables/fixes/improves]
+
+**Conversation:**
+{conversation}
+
+**Structured Summary:**"""
+
+CODE_BUG_PATTERN_EXTRACTION = """Extract reusable patterns from this bug fix for future reference.
+
+**Bug Fix:**
+{bug_fix}
+
+**Extract:**
+1. **Root Cause:** What caused the bug?
+2. **Solution Pattern:** How was it fixed?
+3. **Prevention:** How to avoid this in the future?
+4. **Related Areas:** Where else might this pattern apply?
+
+**Pattern Summary:**"""
+
+CODE_REVIEW_PROMPT = """Provide a code review based on project history and best practices.
+
+**Code to Review:**
+{code}
+
+**Project Context:**
+{context}
+
+**Review Focus:**
+1. **Consistency:** Does it match existing patterns?
+2. **Conflicts:** Any issues with recent changes?
+3. **Best Practices:** Follows project conventions?
+4. **Potential Issues:** Based on past bugs, what might go wrong?
+
+**Code Review:**"""
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
@@ -349,9 +473,71 @@ PROMPT_CONFIG = {
     "translation": {
         "temperature": 0.2,  # Low for accurate translation
         "max_tokens": 100,
+    },
+    "code_assistant": {
+        "temperature": 0.3,  # Low for accurate code suggestions
+        "max_tokens": 2000,
+    },
+    "code_review": {
+        "temperature": 0.2,
+        "max_tokens": 1000,
+    },
+    "code_summarization": {
+        "temperature": 0.1,  # Very low for factual extraction
+        "max_tokens": 300,
     }
 }
 
 def get_prompt_config(prompt_type: str) -> dict:
     """Get configuration for a specific prompt type."""
     return PROMPT_CONFIG.get(prompt_type, {})
+
+# =============================================================================
+# CODE PROMPT UTILITIES - Phase 4
+# =============================================================================
+
+def format_code_system_prompt(code_memories: list[dict] = None) -> str:
+    """Format the code assistant system prompt with optional code context."""
+    if not code_memories:
+        return CODE_SYSTEM_PROMPT_BASE
+    
+    # Format code memories into readable context
+    context_lines = []
+    for mem in code_memories:
+        file_path = mem.get('file_path', 'unknown')
+        change_type = mem.get('change_type') or 'changed'  # Handle None
+        summary = mem.get('change_summary', mem.get('text', ''))
+        function = mem.get('function_name')
+        
+        context_line = f"• [{change_type.upper()}] {file_path}"
+        if function:
+            context_line += f"::{function}()"
+        context_line += f" - {summary}"
+        context_lines.append(context_line)
+    
+    code_context = "\n".join(context_lines)
+    return CODE_SYSTEM_PROMPT_WITH_CONTEXT.format(code_context=code_context)
+
+def format_code_context_prompt(memories: list[dict]) -> str:
+    """Format code memories for context inclusion."""
+    memories_text = "\n".join(
+        f"- {m.get('text', m.get('summary', ''))}" 
+        for m in memories
+    )
+    return CODE_CONTEXT_FORMATTING_PROMPT.format(memories=memories_text)
+
+def format_code_query_expansion(query: str) -> str:
+    """Expand code-related query for better search."""
+    return CODE_SEARCH_QUERY_EXPANSION.format(query=query)
+
+def format_code_change_summary(conversation: str) -> str:
+    """Extract structured summary from code change conversation."""
+    return CODE_CHANGE_SUMMARIZATION_PROMPT.format(conversation=conversation)
+
+def format_code_bug_pattern(bug_fix: str) -> str:
+    """Extract reusable pattern from bug fix."""
+    return CODE_BUG_PATTERN_EXTRACTION.format(bug_fix=bug_fix)
+
+def format_code_review(code: str, context: str = "") -> str:
+    """Format code review prompt with context."""
+    return CODE_REVIEW_PROMPT.format(code=code, context=context or "No specific context provided")
