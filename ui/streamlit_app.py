@@ -13,6 +13,9 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.prompts import format_decision_prompt, format_system_prompt, format_summarization_prompt, PROMPT_CONFIG
 
+# Import token tracker
+from token_tracker import get_tracker, display_token_metrics, format_token_badge
+
 # Load .env placed at memory_layer/.env so UI and API share config
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 
@@ -63,7 +66,10 @@ st.caption("Chat, ingest episodes and run search against the FastAPI server")
 api_base = get_api_base_url()
 st.info(f"API base: {api_base}")
 
-tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Debug"])
+# Initialize token tracker
+tracker = get_tracker()
+
+tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Token Usage", "Debug"])
 
 # ---------------------------- Chat Tab ----------------------------
 with tabs[0]:
@@ -114,6 +120,13 @@ with tabs[0]:
                                           help="Number of recent conversation turns to keep as context")
         st.session_state.short_term_window = short_term_window
     
+    # Token breakdown toggle
+    col7_token = st.columns(1)[0]
+    with col7_token:
+        show_token_breakdown = st.checkbox("Show token breakdown (In/Out)", value=st.session_state.get("show_token_breakdown", False), key="token_breakdown_cb",
+                                          help="Show detailed Input/Output token breakdown for each message")
+        st.session_state.show_token_breakdown = show_token_breakdown
+    
     col7, col8, col9 = st.columns([1, 1, 1])
     with col7:
         if st.button("Clear conversation", key="clear_btn"):
@@ -131,7 +144,7 @@ with tabs[0]:
     current_window = st.session_state.get("short_term_window", 5)
     
     st.markdown("### 🧠 Memory Configuration")
-    col_info1, col_info2 = st.columns(2)
+    col_info1, col_info2, col_info3 = st.columns(3)
     with col_info1:
         if current_n == 1:
             st.info("💾 **Mid-term:** Direct save - Each turn → KG immediately")
@@ -139,7 +152,18 @@ with tabs[0]:
             st.info(f"📝 **Mid-term:** Every {current_n} turns → Summarize → KG")
     with col_info2:
         st.info(f"⚡ **Short-term:** Last {current_window} turns kept as context")
-    
+    with col_info3:
+        # Display token usage for CURRENT conversation only
+        current_group_id = st.session_state.get("group_id")
+        if tracker.usage_history and current_group_id:
+            totals = tracker.get_total_tokens(group_id=current_group_id)
+            cost = tracker.get_total_cost(group_id=current_group_id)
+            st.info(f"🔢 **This Chat:** {totals['total_tokens']:,}\n\n"
+                   f"↗️ In: {totals['prompt_tokens']:,} | ↘️ Out: {totals['completion_tokens']:,}\n\n"
+                   f"💰 **Cost:** ${cost:.4f}")
+        else:
+            st.info("🔢 **This Chat:** 0\n\nNo usage yet")
+
     # Group ID Management
     st.markdown("### 🔑 Conversation Group ID")
     
@@ -221,8 +245,12 @@ with tabs[0]:
         # Auto-determine if should summarize based on N
         summarize_to_memory = (ingest_every_n_user_turns > 1)
         
-        # Append user message locally
-        st.session_state.chat_messages.append({"role": "user", "content": user_input})
+        # Append user message locally (no tokens yet)
+        st.session_state.chat_messages.append({
+            "role": "user", 
+            "content": user_input,
+            "token_usage": None  # User messages don't consume tokens
+        })
         with st.chat_message("user"):
             st.markdown(user_input)
 
@@ -278,6 +306,21 @@ with tabs[0]:
                     max_tokens=decision_config.get("max_tokens", 10),
                 )
                 wants_kg = decision.choices[0].message.content.strip().upper().startswith("Y")
+                
+                # Track token usage for decision
+                decision_usage = tracker.track_from_response(
+                    operation="decision",
+                    response=decision,
+                    group_id=st.session_state.group_id,
+                    metadata={
+                        "query": user_input[:50],
+                        "result": "YES" if wants_kg else "NO"
+                    }
+                )
+                
+                # Display decision tokens (optional, only in debug mode)
+                if show_memories and decision_usage and wants_kg:
+                    st.caption(f"🔍 Decision: Query KG → {decision_usage.total_tokens} tokens")
             except Exception:
                 pass
 
@@ -364,6 +407,31 @@ with tabs[0]:
                 )
                 assistant_reply = completion.choices[0].message.content.strip()
                 
+                # Track token usage for chat
+                chat_usage = tracker.track_from_response(
+                    operation="chat",
+                    response=completion,
+                    group_id=st.session_state.group_id,
+                    metadata={
+                        "turn": len(st.session_state.chat_messages) // 2 + 1,
+                        "kg_used": bool(results),
+                        "facts_count": len(top_facts)
+                    }
+                )
+                
+                # Store token usage for this message
+                message_token_usage = None
+                if chat_usage:
+                    message_token_usage = {
+                        "prompt_tokens": chat_usage.prompt_tokens,
+                        "completion_tokens": chat_usage.completion_tokens,
+                        "total_tokens": chat_usage.total_tokens,
+                        "cost": chat_usage.cost,
+                        "model": chat_usage.model,
+                        "kg_used": bool(results),
+                        "facts_count": len(top_facts)
+                    }
+                
                 # Check if response was truncated
                 if completion.choices[0].finish_reason == "length":
                     st.warning("⚠️ Response was truncated due to max_tokens limit. Consider increasing it.")
@@ -372,10 +440,35 @@ with tabs[0]:
                 assistant_reply = f"Bạn đã nói: {user_input}"
         else:
             assistant_reply = f"Bạn đã nói: {user_input}"
+            message_token_usage = None  # No OpenAI call, no tokens
 
-        st.session_state.chat_messages.append({"role": "assistant", "content": assistant_reply})
+        # Append assistant message with token usage
+        st.session_state.chat_messages.append({
+            "role": "assistant", 
+            "content": assistant_reply,
+            "token_usage": message_token_usage
+        })
+        
         with st.chat_message("assistant"):
             st.markdown(assistant_reply)
+            
+            # Display token usage badge for this message
+            if message_token_usage:
+                show_breakdown = st.session_state.get("show_token_breakdown", False)
+                col1, col2 = st.columns([3, 1])
+                with col2:
+                    # Format badge with optional breakdown
+                    badge = format_token_badge(
+                        tokens=message_token_usage['total_tokens'],
+                        cost=message_token_usage['cost'],
+                        prompt_tokens=message_token_usage.get('prompt_tokens'),
+                        completion_tokens=message_token_usage.get('completion_tokens'),
+                        show_breakdown=show_breakdown
+                    )
+                    st.caption(badge)
+                    
+                    if message_token_usage.get('kg_used'):
+                        st.caption(f"📚 {message_token_usage.get('facts_count', 0)} facts from KG")
 
         # Save assistant turn if auto-save and not summarizing
         if auto_save and not pause_saving and not summarize_to_memory:
@@ -411,6 +504,22 @@ with tabs[0]:
                             max_tokens=sum_config.get("max_tokens", 250),  # Increased for multiple facts
                         )
                         summary_text = comp.choices[0].message.content.strip()
+                        
+                        # Track token usage for summarization
+                        sum_usage = tracker.track_from_response(
+                            operation="summarization",
+                            response=comp,
+                            group_id=st.session_state.group_id,
+                            metadata={
+                                "turns_summarized": ingest_every_n_user_turns
+                            }
+                        )
+                        
+                        # Display summarization notification with tokens
+                        if show_memories and sum_usage:
+                            st.info(f"📝 **AI Summarized {ingest_every_n_user_turns} turns**\n\n"
+                                   f"🎫 {sum_usage.total_tokens:,} tokens • ${sum_usage.cost:.4f}\n\n"
+                                   f"Model: {sum_usage.model}")
                     except Exception:
                         summary_text = None
                 if not summary_text:
@@ -519,9 +628,29 @@ with tabs[0]:
     
     # Render chat history in the container (at top)
     with chat_container:
+        show_breakdown = st.session_state.get("show_token_breakdown", False)
+        
         for msg in st.session_state.chat_messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+                
+                # Display token usage for this message if available
+                if msg.get("token_usage") and msg["role"] == "assistant":
+                    usage = msg["token_usage"]
+                    col1, col2 = st.columns([3, 1])
+                    with col2:
+                        # Format badge with optional breakdown
+                        badge = format_token_badge(
+                            tokens=usage['total_tokens'],
+                            cost=usage['cost'],
+                            prompt_tokens=usage.get('prompt_tokens'),
+                            completion_tokens=usage.get('completion_tokens'),
+                            show_breakdown=show_breakdown
+                        )
+                        st.caption(badge)
+                        
+                        if usage.get('kg_used'):
+                            st.caption(f"📚 {usage.get('facts_count', 0)} facts from KG")
     
     # Chat input at the very bottom
     chat_input = st.chat_input("Type your message")
@@ -1201,8 +1330,179 @@ with tabs[3]:
     - All caches can be cleared manually for maintenance
     """)
 
-# ---------------------------- Debug Tab ----------------------------
+# ---------------------------- Token Usage Tab ----------------------------
 with tabs[4]:
+    st.subheader("📊 Token Usage Analytics")
+    
+    # Filter by conversation
+    all_group_ids = tracker.get_all_group_ids()
+    
+    if all_group_ids:
+        st.markdown("### 🔍 Filter by Conversation")
+        
+        col_filter1, col_filter2 = st.columns([3, 1])
+        
+        with col_filter1:
+            # Add "All Conversations" option
+            filter_options = ["All Conversations"] + all_group_ids
+            selected_filter = st.selectbox(
+                "Select Conversation",
+                options=filter_options,
+                key="token_filter_group_id",
+                help="Filter token usage by conversation group_id"
+            )
+        
+        with col_filter2:
+            # Show current conversation
+            current_gid = st.session_state.get("group_id", "")
+            if st.button("📍 Current Chat", key="filter_current"):
+                st.session_state.token_filter_group_id = current_gid
+                st.rerun()
+        
+        # Determine filter value
+        filter_group_id = None if selected_filter == "All Conversations" else selected_filter
+        
+        # Display metrics with filter
+        display_token_metrics(tracker, compact=False, group_id=filter_group_id)
+        
+        # Breakdown by conversation
+        st.markdown("---")
+        st.markdown("### 💬 Token Usage by Conversation")
+        
+        by_group = tracker.get_by_group_id()
+        
+        if by_group:
+            group_data = []
+            for gid, stats in by_group.items():
+                # Format operations
+                ops_str = ", ".join([f"{op}({count})" for op, count in stats['operations'].items()])
+                
+                group_data.append({
+                    "Conversation": gid[:12] + "..." if len(gid) > 12 else gid,
+                    "Calls": stats['count'],
+                    "Tokens": f"{stats['total_tokens']:,}",
+                    "Cost": f"${stats['cost']:.4f}",
+                    "Operations": ops_str,
+                    "Is Current": "✓" if gid == current_gid else ""
+                })
+            
+            # Sort by cost (highest first)
+            group_data.sort(key=lambda x: float(x['Cost'].replace('$', '')), reverse=True)
+            
+            st.dataframe(group_data, use_container_width=True)
+            
+            # Summary stats
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Conversations", len(by_group))
+            with col2:
+                avg_cost = sum(s['cost'] for s in by_group.values()) / len(by_group)
+                st.metric("Avg Cost/Conversation", f"${avg_cost:.4f}")
+            with col3:
+                max_cost = max(s['cost'] for s in by_group.values())
+                st.metric("Most Expensive", f"${max_cost:.4f}")
+        else:
+            st.info("No conversation data available")
+    else:
+        # No group_ids yet
+        display_token_metrics(tracker, compact=False)
+    
+    # Session controls
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🔄 Refresh Stats", key="refresh_token_stats"):
+            st.rerun()
+    
+    with col2:
+        if st.button("🗑️ Clear Token History", key="clear_token_history", type="secondary"):
+            tracker.clear()
+            st.success("Token history cleared!")
+            st.rerun()
+    
+    with col3:
+        if st.button("📥 Export to JSON", key="export_tokens"):
+            data = tracker.export_to_dict()
+            json_str = json.dumps(data, indent=2)
+            st.download_button(
+                label="💾 Download JSON",
+                data=json_str,
+                file_name=f"token_usage_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                key="download_token_json"
+            )
+    
+    # Cost projection
+    if tracker.usage_history:
+        st.markdown("---")
+        st.markdown("### 💰 Cost Projection")
+        
+        total_cost = tracker.get_total_cost()
+        total_calls = len(tracker.usage_history)
+        avg_cost_per_call = total_cost / total_calls if total_calls > 0 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Avg Cost/Call", f"${avg_cost_per_call:.4f}")
+        
+        with col2:
+            proj_100 = avg_cost_per_call * 100
+            st.metric("100 Calls", f"${proj_100:.2f}")
+        
+        with col3:
+            proj_1000 = avg_cost_per_call * 1000
+            st.metric("1,000 Calls", f"${proj_1000:.2f}")
+        
+        with col4:
+            proj_10000 = avg_cost_per_call * 10000
+            st.metric("10,000 Calls", f"${proj_10000:.2f}")
+        
+        # Cost by model
+        st.markdown("### 🤖 Model Usage")
+        model_usage = {}
+        for usage in tracker.usage_history:
+            model = usage.model
+            if model not in model_usage:
+                model_usage[model] = {"calls": 0, "tokens": 0, "cost": 0.0}
+            model_usage[model]["calls"] += 1
+            model_usage[model]["tokens"] += usage.total_tokens
+            model_usage[model]["cost"] += usage.cost
+        
+        model_data = []
+        for model, stats in model_usage.items():
+            model_data.append({
+                "Model": model,
+                "Calls": stats["calls"],
+                "Total Tokens": f"{stats['tokens']:,}",
+                "Total Cost": f"${stats['cost']:.4f}",
+                "Avg Tokens/Call": f"{stats['tokens'] // stats['calls']:,}"
+            })
+        
+        st.dataframe(model_data, use_container_width=True)
+    
+    # Tips and info
+    st.markdown("---")
+    st.markdown("### 💡 Token Optimization Tips")
+    st.info("""
+    **Reduce Token Usage:**
+    - ✅ Use shorter prompts when possible
+    - ✅ Increase summarization interval (N=5 instead of N=2)
+    - ✅ Reduce short-term memory window
+    - ✅ Use gpt-4o-mini instead of gpt-4 (cheaper)
+    - ✅ Enable importance filtering (threshold ≥ 0.3)
+    
+    **Tracked Operations:**
+    - 💬 **Chat**: Main conversation messages
+    - 🔍 **Decision**: LLM decides if KG search needed
+    - 📝 **Summarization**: Multi-turn conversation summaries
+    - 🌐 **Translation**: Query translation for better search
+    - ⭐ **Importance**: Fact importance scoring
+    """)
+
+# ---------------------------- Debug Tab ----------------------------
+with tabs[5]:
     st.subheader("Debug Tools")
     
     st.markdown("### Check Episodes by Group ID")
