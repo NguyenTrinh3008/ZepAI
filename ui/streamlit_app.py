@@ -464,6 +464,52 @@ with tabs[0]:
         # Save user message to short term memory
         if st.session_state.get("enable_short_term_memory", True):
             try:
+                # Check if this is a file upload message
+                uploaded_file = st.session_state.get("uploaded_file")
+                if uploaded_file and ("Please analyze this file:" in user_input or 
+                                    "Please review and fix any issues in this file:" in user_input or 
+                                    "Please improve this code:" in user_input or
+                                    "Please work on this file:" in user_input or
+                                    "Please add comprehensive error handling to this file:" in user_input or
+                                    "Please optimize the performance of this file:" in user_input or
+                                    "Please add comprehensive documentation and comments to this file:" in user_input):
+                    # This is a file upload message, save file to short term memory
+                    try:
+                        base = get_api_base_url()
+                        project_id = st.session_state.get("project_id", "default_project")
+                        conversation_id = st.session_state.group_id
+                        
+                        # Upload file to API
+                        files = {'file': (uploaded_file["name"], uploaded_file["content"], 'text/plain')}
+                        data = {
+                            'project_id': project_id,
+                            'conversation_id': conversation_id,
+                            'role': 'user',
+                            'content': f'Uploaded file: {uploaded_file["name"]}',
+                            'change_type': 'modified',
+                            'description': 'File uploaded for AI analysis'
+                        }
+                        
+                        response = requests.post(f"{base}/upload/file", files=files, data=data, timeout=30)
+                        response.raise_for_status()
+                        result = response.json()
+                        
+                        if result.get("status") == "success":
+                            st.caption(f"📁 File uploaded to short term memory: {result['result']['message_id'][:8]}...")
+                            
+                            # Show file analysis
+                            analysis = result['result']['file_analysis']
+                            st.caption(f"📊 File analysis: {analysis.get('total_lines', 0)} lines, {len(analysis.get('functions', []))} functions, {len(analysis.get('classes', []))} classes")
+                        else:
+                            st.error(f"Failed to upload file: {result.get('message', 'Unknown error')}")
+                            st.caption(f"🔍 Debug: Full upload result = {result}")
+                            
+                    except Exception as e:
+                        st.error(f"Error uploading file to short term memory: {e}")
+                    
+                    # Clear uploaded file from session state
+                    st.session_state.pop("uploaded_file", None)
+                
                 # Extract code context from user input
                 code_context = extract_code_context_from_message(user_input)
                 
@@ -478,6 +524,8 @@ with tabs[0]:
                 
                 if message_id:
                     st.caption(f"💾 Saved to short term memory: {message_id[:8]}...")
+                else:
+                    st.caption("⚠️ Failed to save user message to short term memory")
                     
             except Exception as e:
                 st.error(f"Error saving user message to short term memory: {e}")
@@ -683,6 +731,57 @@ with tabs[0]:
             # Save assistant message to short term memory
             if st.session_state.get("enable_short_term_memory", True):
                 try:
+                    # Check if assistant made file modifications
+                    uploaded_file = st.session_state.get("uploaded_file")
+                    if uploaded_file and ("```" in assistant_reply or "def " in assistant_reply or "class " in assistant_reply or "import " in assistant_reply):
+                        # Assistant provided code modifications, use new diffing functionality
+                        try:
+                            base = get_api_base_url()
+                            project_id = st.session_state.get("project_id", "default_project")
+                            conversation_id = st.session_state.group_id
+                            
+                            # Use new AI code response processing
+                            from app.file_upload_handler import get_file_upload_handler
+                            handler = get_file_upload_handler()
+                            
+                            import asyncio
+                            result = asyncio.run(handler.process_ai_code_response(
+                                original_file_content=uploaded_file["content"],
+                                ai_response=assistant_reply,
+                                file_name=uploaded_file["name"],
+                                project_id=project_id,
+                                conversation_id=conversation_id,
+                                role="assistant"
+                            ))
+                            
+                            # Debug logging
+                            st.caption(f"🔍 Debug: AI code response result = {result.get('status', 'unknown')}")
+                            
+                            if result.get("status") == "success":
+                                st.caption(f"🔧 Code changes saved to short term memory: {result['result']['results'][0]['message_id'][:8]}...")
+                                
+                                # Show detailed changes summary
+                                changes = result['result']['results'][0]
+                                diff_info = result.get('diff_info', {})
+                                
+                                st.caption(f"📝 Changes: {changes['file_name']} - {changes['file_action']} lines {changes['line_range']}")
+                                st.caption(f"📊 Diff: Lines {diff_info.get('line_start', 'N/A')}-{diff_info.get('line_end', 'N/A')}, {diff_info.get('total_chunks', 0)} chunks")
+                                
+                                if diff_info.get('function_name'):
+                                    st.caption(f"🔧 Function: {diff_info['function_name']}")
+                                
+                            elif result.get("status") == "no_code":
+                                st.caption("ℹ️ No code blocks detected in AI response")
+                            else:
+                                st.error(f"Failed to process code changes: {result.get('message', 'Unknown error')}")
+                                # Show full result for debugging
+                                st.caption(f"🔍 Full result: {result}")
+                                
+                        except Exception as e:
+                            st.error(f"Error processing AI code response: {e}")
+                            import traceback
+                            st.caption(f"🔍 Debug traceback: {traceback.format_exc()}")
+                    
                     # Extract code context from assistant reply
                     code_context = extract_code_context_from_message(assistant_reply)
                     
@@ -697,6 +796,8 @@ with tabs[0]:
                     
                     if message_id:
                         st.caption(f"💾 Saved to short term memory: {message_id[:8]}...")
+                    else:
+                        st.caption("⚠️ Failed to save to short term memory")
                         
                 except Exception as e:
                     st.error(f"Error saving assistant message to short term memory: {e}")
@@ -901,8 +1002,106 @@ with tabs[0]:
                         if usage.get('kg_used'):
                             st.caption(f"📚 {usage.get('facts_count', 0)} facts from KG")
     
+    # File upload section
+    st.markdown("---")
+    st.markdown("### 📁 Upload File for AI Analysis")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        uploaded_file = st.file_uploader(
+            "Choose a code file to upload",
+            type=['py', 'js', 'ts', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'txt', 'md','tsx'],
+            help="Upload a file for AI to read and analyze. AI can then make modifications based on your requests.",
+            key="chat_file_uploader"
+        )
+    
+    with col2:
+        if uploaded_file is not None:
+            st.success(f"📄 {uploaded_file.name} ready!")
+    
+    # Show file content if uploaded
+    if uploaded_file is not None:
+        try:
+            file_content = uploaded_file.read().decode('utf-8')
+            st.markdown("**File Content Preview:**")
+            st.code(file_content, language='python' if uploaded_file.name.endswith('.py') else 'text')
+            
+            # Add file info to session state
+            st.session_state["uploaded_file"] = {
+                "name": uploaded_file.name,
+                "content": file_content,
+                "size": len(file_content)
+            }
+            
+            # Custom description input
+            st.markdown("**📝 Describe what you want AI to do with this file:**")
+            custom_description = st.text_area(
+                "Task description",
+                placeholder="e.g., Add error handling to all functions, optimize performance, fix bugs, add new features...",
+                height=100,
+                key="file_task_description"
+            )
+            
+            # Action buttons
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                if st.button("🔍 Analyze File", key="analyze_file_btn"):
+                    # Create analysis message
+                    analysis_msg = f"Please analyze this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    st.session_state["_pending_input"] = analysis_msg
+                    st.rerun()
+            
+            with col2:
+                if st.button("🛠️ Fix Issues", key="fix_file_btn"):
+                    # Create fix message
+                    fix_msg = f"Please review and fix any issues in this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    st.session_state["_pending_input"] = fix_msg
+                    st.rerun()
+            
+            with col3:
+                if st.button("📝 Improve Code", key="improve_file_btn"):
+                    # Create improve message
+                    improve_msg = f"Please improve this code: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    st.session_state["_pending_input"] = improve_msg
+                    st.rerun()
+            
+            with col4:
+                if st.button("🚀 Send with Description", key="send_with_description_btn"):
+                    if custom_description.strip():
+                        # Create custom message with description
+                        custom_msg = f"Please work on this file: {uploaded_file.name}\n\nTask: {custom_description}\n\nFile content:\n```\n{file_content}\n```"
+                        st.session_state["_pending_input"] = custom_msg
+                        st.rerun()
+                    else:
+                        st.warning("Please enter a task description first!")
+            
+            # Quick examples
+            st.markdown("**💡 Quick Examples:**")
+            example_cols = st.columns(3)
+            with example_cols[0]:
+                if st.button("Add Error Handling", key="example_error_handling"):
+                    example_msg = f"Please add comprehensive error handling to this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    st.session_state["_pending_input"] = example_msg
+                    st.rerun()
+            
+            with example_cols[1]:
+                if st.button("Optimize Performance", key="example_optimize"):
+                    example_msg = f"Please optimize the performance of this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    st.session_state["_pending_input"] = example_msg
+                    st.rerun()
+            
+            with example_cols[2]:
+                if st.button("Add Documentation", key="example_docs"):
+                    example_msg = f"Please add comprehensive documentation and comments to this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    st.session_state["_pending_input"] = example_msg
+                    st.rerun()
+                    
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+    
     # Chat input at the very bottom
-    chat_input = st.chat_input("Type your message")
+    chat_input = st.chat_input("Type your message or upload a file above")
     if chat_input:
         st.session_state["_pending_input"] = chat_input
         st.rerun()
@@ -1802,6 +2001,7 @@ with tabs[6]:
                 st.warning("Please enter a group_id")
     
     st.markdown("---")
+    
     
     # Short Term Memory Stats
     st.markdown("### Short Term Memory Stats")

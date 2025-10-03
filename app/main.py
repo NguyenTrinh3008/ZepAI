@@ -2,7 +2,8 @@
 import asyncio
 import os
 from datetime import datetime
-from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException
+from typing import Dict, Any
+from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, UploadFile, File, Form
 from fastapi.responses import Response
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
@@ -22,6 +23,7 @@ from app.graphiti_integration import enable_global_openai_tracking
 from app.graphiti_token_tracker import get_global_tracker
 from app.graphiti_estimator import estimate_and_track
 from app.short_term_storage import get_storage
+from app.file_upload_handler import get_file_upload_handler
 
 enable_global_openai_tracking()
 app = FastAPI(title="Graphiti Memory Layer")
@@ -251,9 +253,12 @@ def root():
             "/short-term/search": "POST - Search short term memory",
             "/short-term/message/{message_id}": "GET - Get short term message by ID",
             "/short-term/message/{message_id}": "DELETE - Delete short term message",
-            "/short-term/stats/{project_id}": "GET - Get short term memory stats",
-            "/short-term/cleanup": "POST - Cleanup expired short term messages",
-            "/short-term/health": "GET - Check short term memory health"
+                    "/short-term/stats/{project_id}": "GET - Get short term memory stats",
+                    "/short-term/cleanup": "POST - Cleanup expired short term messages",
+                    "/short-term/health": "GET - Check short term memory health",
+                    "/upload/file": "POST - Upload file code and extract changes",
+                    "/upload/code-changes": "POST - Upload code changes payload from IDE",
+                    "/upload/text-content": "POST - Upload file content as text"
         }
     }
 
@@ -1234,3 +1239,150 @@ async def short_term_health():
             "status": "unhealthy",
             "error": str(e)
         }
+
+# =============================================================================
+# FILE UPLOAD ENDPOINTS
+# =============================================================================
+
+@app.post("/upload/file")
+async def upload_file(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+    conversation_id: str = Form(...),
+    role: str = Form("assistant"),
+    content: str = Form(""),
+    change_type: str = Form("modified"),
+    description: str = Form("")
+):
+    """
+    Upload file code và trích xuất thông tin code changes
+    
+    Args:
+        file: File code được upload
+        project_id: ID dự án
+        conversation_id: ID cuộc trò chuyện
+        role: Role của message
+        content: Nội dung message mô tả
+        change_type: Loại thay đổi (added, modified, deleted, refactored)
+        description: Mô tả thay đổi
+        
+    Returns:
+        Thông tin code changes được trích xuất
+    """
+    try:
+        # Đọc nội dung file
+        file_content = await file.read()
+        file_content_str = file_content.decode('utf-8')
+        
+        # Xử lý file upload
+        handler = get_file_upload_handler()
+        result = await handler.process_file_upload(
+            file_content=file_content_str,
+            file_name=file.filename,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            change_type=change_type,
+            description=description
+        )
+        
+        return {
+            "status": "success",
+            "message": "File uploaded and analyzed successfully",
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+@app.post("/upload/code-changes")
+async def upload_code_changes(
+    payload: Dict[str, Any],
+    project_id: str = Form(...),
+    conversation_id: str = Form(""),
+    role: str = Form("assistant")
+):
+    """
+    Upload payload code changes từ IDE/editor
+    
+    Args:
+        payload: Payload chứa file_before, file_after, chunks
+        project_id: ID dự án
+        conversation_id: ID cuộc trò chuyện
+        role: Role của message
+        
+    Returns:
+        Thông tin code changes được xử lý
+    """
+    try:
+        # Xử lý code changes payload
+        handler = get_file_upload_handler()
+        result = await handler.process_code_changes_payload(
+            payload=payload,
+            project_id=project_id,
+            conversation_id=conversation_id or f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            role=role
+        )
+        
+        return {
+            "status": "success",
+            "message": "Code changes processed successfully",
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing code changes: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process code changes: {str(e)}")
+
+@app.post("/upload/text-content")
+async def upload_text_content(
+    file_content: str = Form(...),
+    file_name: str = Form(...),
+    project_id: str = Form(...),
+    conversation_id: str = Form(...),
+    role: str = Form("assistant"),
+    content: str = Form(""),
+    change_type: str = Form("modified"),
+    description: str = Form("")
+):
+    """
+    Upload nội dung file dưới dạng text
+    
+    Args:
+        file_content: Nội dung file code
+        file_name: Tên file
+        project_id: ID dự án
+        conversation_id: ID cuộc trò chuyện
+        role: Role của message
+        content: Nội dung message mô tả
+        change_type: Loại thay đổi
+        description: Mô tả thay đổi
+        
+    Returns:
+        Thông tin code changes được trích xuất
+    """
+    try:
+        # Xử lý text content
+        handler = get_file_upload_handler()
+        result = await handler.process_file_upload(
+            file_content=file_content,
+            file_name=file_name,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            change_type=change_type,
+            description=description
+        )
+        
+        return {
+            "status": "success",
+            "message": "Text content uploaded and analyzed successfully",
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error uploading text content: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload text content: {str(e)}")

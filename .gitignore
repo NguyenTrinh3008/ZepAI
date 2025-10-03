@@ -8,5 +8,6 @@ __pycache__/
 .DS_Store
 *.md
 docs/
+tests/
 short_term.json
 stm 1.json
