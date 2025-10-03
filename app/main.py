@@ -24,6 +24,8 @@ from app.graphiti_token_tracker import get_global_tracker
 from app.graphiti_estimator import estimate_and_track
 from app.short_term_storage import get_storage
 from app.file_upload_handler import get_file_upload_handler
+from app.stm_to_neo4j import import_stm_json_content
+from app.stm_to_neo4j import import_stm_json_content
 
 enable_global_openai_tracking()
 app = FastAPI(title="Graphiti Memory Layer")
@@ -1386,3 +1388,14 @@ async def upload_text_content(
     except Exception as e:
         logger.error(f"Error uploading text content: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload text content: {str(e)}")
+
+
+@app.post("/graph/import-stm-json")
+async def import_stm_json(file: UploadFile = File(...)):
+    """Upload a Short Term Memory JSON file and import it into Neo4j."""
+    try:
+        text = (await file.read()).decode("utf-8")
+        summary = await import_stm_json_content(text)
+        return {"status": "success", "summary": summary}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

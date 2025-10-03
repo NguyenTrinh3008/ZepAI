@@ -1010,7 +1010,7 @@ with tabs[0]:
     with col1:
         uploaded_file = st.file_uploader(
             "Choose a code file to upload",
-            type=['py', 'js', 'ts', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'txt', 'md','tsx'],
+            type=['py', 'js', 'ts', 'java', 'cpp', 'c', 'cs', 'php', 'rb', 'go', 'rs', 'txt', 'md','tsx','json'],
             help="Upload a file for AI to read and analyze. AI can then make modifications based on your requests.",
             key="chat_file_uploader"
         )
@@ -1105,6 +1105,45 @@ with tabs[0]:
     if chat_input:
         st.session_state["_pending_input"] = chat_input
         st.rerun()
+
+    # Import STM JSON into Neo4j (always visible)
+    st.markdown("---")
+    st.markdown("### 🧠 Import Short Term Memory JSON to Neo4j")
+    stm_json = st.file_uploader(
+        "Choose a short_term.json to import",
+        type=["json"],
+        key="stm_json_uploader"
+    )
+    if stm_json is not None:
+        with st.expander("Preview JSON (first 2 KB)"):
+            try:
+                preview = stm_json.getvalue()[:2048].decode("utf-8", errors="replace")
+            except Exception:
+                preview = "<binary>"
+            st.code(preview)
+        if st.button("📤 Import to Neo4j", key="import_stm_json_btn"):
+            try:
+                base = get_api_base_url()
+                files = {"file": (stm_json.name, stm_json.getvalue(), "application/json")}
+                import requests
+                resp = requests.post(f"{base}/graph/import-stm-json", files=files, timeout=120)
+                # Don't raise; surface error body
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"status": "error", "detail": resp.text}
+                if resp.status_code != 200:
+                    st.error(f"Import failed ({resp.status_code}): {data.get('detail', data)}")
+                    st.stop()
+                if data.get("status") == "success":
+                    summary = data.get("summary", {})
+                    st.success(
+                        f"Imported: {summary.get('created_messages', 0)} messages into Neo4j"
+                    )
+                else:
+                    st.error(f"Failed to import: {data}")
+            except Exception as e:
+                st.error(f"Error importing STM JSON: {e}")
 
 # ---------------------------- Ingest Tab ----------------------------
 with tabs[1]:
