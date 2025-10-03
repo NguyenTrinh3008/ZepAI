@@ -345,8 +345,8 @@ class FileUploadHandler:
         if code_lines:
             return ['\n'.join(code_lines)]
         
-        # Fallback: return original text if no code blocks found
-        return [text]
+        # Nếu không tìm thấy code blocks, return empty list
+        return []
     
     def _compare_code_changes(self, 
                              original_content: str, 
@@ -366,10 +366,14 @@ class FileUploadHandler:
             Dict[str, Any]: Payload code_changes theo schema.
         """
         
+        # Normalize line endings
+        original_lines = original_content.replace('\r\n', '\n').splitlines(keepends=True)
+        modified_lines = modified_content.replace('\r\n', '\n').splitlines(keepends=True)
+        
         # Tạo unified diff
         diff = difflib.unified_diff(
-            original_content.splitlines(keepends=True),
-            modified_content.splitlines(keepends=True),
+            original_lines,
+            modified_lines,
             fromfile=f"a/{file_name}",
             tofile=f"b/{file_name}",
             lineterm=''
@@ -382,6 +386,9 @@ class FileUploadHandler:
         
         # Bỏ qua 2 dòng header của unified diff
         diff_lines = list(diff)[2:] 
+        
+        print(f"DEBUG: Diff lines count: {len(diff_lines)}")
+        print(f"DEBUG: First few diff lines: {[line.encode('ascii', 'replace').decode('ascii') for line in diff_lines[:5]]}")
 
         for line in diff_lines:
             if line.startswith('@@'):
@@ -405,6 +412,7 @@ class FileUploadHandler:
                         "file_name_rename": None,
                         "application_details": ""
                     }
+                    print(f"DEBUG: New chunk starting at line {line_num_original}")
                 continue
 
             if current_chunk:
@@ -430,6 +438,7 @@ class FileUploadHandler:
             # Find the earliest start line and latest end line across all chunks
             overall_line_start = min(c["line1"] for c in chunks)
             overall_line_end = max(c["line2"] for c in chunks)
+            print(f"DEBUG: Found {len(chunks)} chunks, line range: {overall_line_start}-{overall_line_end}")
 
         return {
             "file_before": original_content,
@@ -473,6 +482,12 @@ class FileUploadHandler:
             
             # Lấy code block lớn nhất (thường là file đã được chỉnh sửa)
             modified_content = max(code_blocks, key=len)
+            
+            # Debug logging
+            print(f"DEBUG: Found {len(code_blocks)} code blocks")
+            print(f"DEBUG: Using code block with {len(modified_content)} characters")
+            print(f"DEBUG: Original content length: {len(original_file_content)}")
+            print(f"DEBUG: Modified content preview: {modified_content[:200]}...")
             
             # So sánh với file gốc
             code_changes = self._compare_code_changes(

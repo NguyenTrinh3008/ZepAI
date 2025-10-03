@@ -507,8 +507,8 @@ with tabs[0]:
                     except Exception as e:
                         st.error(f"Error uploading file to short term memory: {e}")
                     
-                    # Clear uploaded file from session state
-                    st.session_state.pop("uploaded_file", None)
+                    # Keep uploaded file in session state so assistant reply can diff against it
+                    # st.session_state.pop("uploaded_file", None)
                 
                 # Extract code context from user input
                 code_context = extract_code_context_from_message(user_input)
