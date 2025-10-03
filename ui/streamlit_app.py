@@ -1114,6 +1114,7 @@ with tabs[0]:
         type=["json"],
         key="stm_json_uploader"
     )
+    use_llm = st.checkbox("Use LLM to enrich graph (Concepts, RELATES_TO)", value=False, key="stm_use_llm")
     if stm_json is not None:
         with st.expander("Preview JSON (first 2 KB)"):
             try:
@@ -1125,8 +1126,9 @@ with tabs[0]:
             try:
                 base = get_api_base_url()
                 files = {"file": (stm_json.name, stm_json.getvalue(), "application/json")}
+                data = {"use_llm": str(use_llm).lower()}
                 import requests
-                resp = requests.post(f"{base}/graph/import-stm-json", files=files, timeout=120)
+                resp = requests.post(f"{base}/graph/import-stm-json", files=files, data=data, timeout=120)
                 # Don't raise; surface error body
                 try:
                     data = resp.json()

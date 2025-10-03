@@ -1391,11 +1391,11 @@ async def upload_text_content(
 
 
 @app.post("/graph/import-stm-json")
-async def import_stm_json(file: UploadFile = File(...)):
+async def import_stm_json(file: UploadFile = File(...), use_llm: bool = Form(False)):
     """Upload a Short Term Memory JSON file and import it into Neo4j."""
     try:
         text = (await file.read()).decode("utf-8")
-        summary = await import_stm_json_content(text)
+        summary = await import_stm_json_content(text, use_llm=use_llm)
         return {"status": "success", "summary": summary}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
