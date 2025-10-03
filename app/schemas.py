@@ -1,7 +1,7 @@
 # app/schemas.py
 from pydantic import BaseModel, Field
 from pydantic import ConfigDict
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 
 class IngestText(BaseModel):
     name: str
@@ -102,3 +102,58 @@ class SearchCodeRequest(BaseModel):
     change_type_filter: Optional[str] = None  # Filter by change type: "fixed", "added", etc.
     days_ago: Optional[int] = 2               # Filter by time: default last 2 days
     focal_node_uuid: Optional[str] = None     # Optional focal node for search
+
+# =============================================================================
+# SHORT TERM MEMORY SCHEMAS - For chat message storage
+# =============================================================================
+
+class ShortTermMemoryMetadata(BaseModel):
+    """Metadata for short term memory message"""
+    conversation_id: str                      # Required: ID of the conversation
+    file_path: Optional[str] = None           # File path if related to code
+    function_name: Optional[str] = None       # Function name if related to code
+    line_start: Optional[int] = None          # Starting line number of code range that AI modified
+    line_end: Optional[int] = None            # Ending line number of code range that AI modified
+    code_changes: Optional[Dict[str, Any]] = None  # Detailed code changes made by AI
+    lines_added: Optional[int] = None              # Number of lines added by AI
+    lines_removed: Optional[int] = None            # Number of lines removed by AI
+    diff_summary: Optional[str] = None             # Summary of line changes
+    intent: Optional[str] = None              # Intent of the message (question, request, etc.)
+    keywords: Optional[List[str]] = None      # Extracted keywords
+    embedding: List[float]                    # Required: Vector embedding for similarity search
+    ttl: Optional[int] = None                 # Time to live in seconds
+
+class ShortTermMemory(BaseModel):
+    """Schema for storing chat messages in short term memory"""
+    id: str                                   # Required: Unique message ID
+    role: str                                 # Required: "user", "assistant", "system"
+    content: str                              # Required: Message content
+    timestamp: str                            # Required: ISO8601 timestamp
+    project_id: str                           # Required: Project identifier
+    metadata: ShortTermMemoryMetadata         # Required: Message metadata
+
+class ShortTermMemoryRequest(BaseModel):
+    """Request to save a message to short term memory"""
+    role: str                                 # "user", "assistant", "system"
+    content: str                              # Message content
+    project_id: str                           # Project identifier
+    conversation_id: str                      # Conversation identifier
+    file_path: Optional[str] = None           # File path if related to code
+    function_name: Optional[str] = None       # Function name if related to code
+    line_start: Optional[int] = None          # Starting line number of code range that AI modified
+    line_end: Optional[int] = None            # Ending line number of code range that AI modified
+    code_changes: Optional[Dict[str, Any]] = None  # Detailed code changes made by AI
+    lines_added: Optional[int] = None              # Number of lines added by AI
+    lines_removed: Optional[int] = None            # Number of lines removed by AI
+    diff_summary: Optional[str] = None             # Summary of line changes
+    intent: Optional[str] = None              # Intent of the message
+    keywords: Optional[List[str]] = None      # Extracted keywords
+    ttl: Optional[int] = None                 # Time to live in seconds
+
+class ShortTermMemorySearchRequest(BaseModel):
+    """Request to search short term memory"""
+    query: str                                # Search query
+    project_id: str                           # Project identifier
+    conversation_id: Optional[str] = None     # Filter by conversation
+    role: Optional[str] = None                # Filter by role
+    limit: Optional[int] = 10                 # Maximum results to return

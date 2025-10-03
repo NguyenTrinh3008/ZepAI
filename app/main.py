@@ -10,12 +10,20 @@ from app.graph import get_graphiti
 from app.graph import _graphiti  # for reset endpoint
 from app.schemas import (
     IngestText, IngestMessage, IngestJSON, SearchRequest,
-    IngestCodeChange, IngestCodeContext, SearchCodeRequest
+    IngestCodeChange, IngestCodeContext, SearchCodeRequest,
+    ShortTermMemoryRequest, ShortTermMemorySearchRequest
 )
 from app.cache import (
     cached_with_ttl, cache_search_result, memory_cache, 
     invalidate_search_cache, invalidate_node_cache, get_cache_metrics
 )
+
+from app.graphiti_integration import enable_global_openai_tracking
+from app.graphiti_token_tracker import get_global_tracker
+from app.graphiti_estimator import estimate_and_track
+from app.short_term_storage import get_storage
+
+enable_global_openai_tracking()
 app = FastAPI(title="Graphiti Memory Layer")
 
 @app.post("/ingest/text")
@@ -35,32 +43,11 @@ async def ingest_text(payload: IngestText, graphiti=Depends(get_graphiti)):
         group_id=payload.group_id,
     )
     
-    # Invalidate search cache khi có dữ liệu mới
-    invalidate_search_cache()
-    
-    return {
-        "episode_id": ep.id if hasattr(ep, "id") else payload.name,
-        "group_id": payload.group_id,
-        "name": payload.name
-    }
-
-@app.post("/ingest/message")
-async def ingest_message(payload: IngestMessage, graphiti=Depends(get_graphiti)):
-    ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
-    body = "\n".join(payload.messages)  # yêu cầu dạng "speaker: message" theo doc
-    
-    # Debug logging
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Ingesting message with group_id: {payload.group_id}, name: {payload.name}")
-    
-    ep = await graphiti.add_episode(
-        name=payload.name,
-        episode_body=body,
-        source=EpisodeType.message,
-        source_description=payload.source_description,
-        reference_time=ts,
-        group_id=payload.group_id,
+    # ESTIMATE token usage for this episode
+    token_estimate = estimate_and_track(
+        episode_id=payload.name,
+        episode_body=payload.text,
+        model="gpt-4o-mini"
     )
     
     # Invalidate search cache khi có dữ liệu mới
@@ -69,8 +56,43 @@ async def ingest_message(payload: IngestMessage, graphiti=Depends(get_graphiti))
     return {
         "episode_id": ep.id if hasattr(ep, "id") else payload.name,
         "group_id": payload.group_id,
-        "name": payload.name
+        "name": payload.name,
+        "token_estimate": token_estimate
     }
+
+@app.post("/ingest/message")
+async def ingest_message(payload: IngestMessage, graphiti=Depends(get_graphiti)):
+    tracker = get_global_tracker()
+    tracker.set_episode_context(payload.name)
+    
+    try:
+        ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
+        body = "\n".join(payload.messages)  # yêu cầu dạng "speaker: message" theo doc
+        
+        # Debug logging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Ingesting message with group_id: {payload.group_id}, name: {payload.name}")
+        
+        ep = await graphiti.add_episode(
+            name=payload.name,
+            episode_body=body,
+            source=EpisodeType.message,
+            source_description=payload.source_description,
+            reference_time=ts,
+            group_id=payload.group_id,
+        )
+        
+        # Invalidate search cache khi có dữ liệu mới
+        invalidate_search_cache()
+        
+        return {
+            "episode_id": ep.id if hasattr(ep, "id") else payload.name,
+            "group_id": payload.group_id,
+            "name": payload.name
+        }
+    finally:
+        tracker.clear_episode_context()
 
 # removed duplicate old JSON ingest using payload.json
 
@@ -224,7 +246,14 @@ def root():
             "/search/code": "POST - Search code memories with filters (Phase 3)",
             "/export/{group_id}": "GET - Export conversation to JSON",
             "/stats/{project_id}": "GET - Get project statistics (Phase 3)",
-            "/admin/cleanup": "POST - Manually cleanup expired memories (Phase 3)"
+            "/admin/cleanup": "POST - Manually cleanup expired memories (Phase 3)",
+            "/short-term/save": "POST - Save message to short term memory",
+            "/short-term/search": "POST - Search short term memory",
+            "/short-term/message/{message_id}": "GET - Get short term message by ID",
+            "/short-term/message/{message_id}": "DELETE - Delete short term message",
+            "/short-term/stats/{project_id}": "GET - Get short term memory stats",
+            "/short-term/cleanup": "POST - Cleanup expired short term messages",
+            "/short-term/health": "GET - Check short term memory health"
         }
     }
 
@@ -297,20 +326,26 @@ def favicon():
 
 @app.post("/ingest/json")
 async def ingest_json(payload: IngestJSON, graphiti=Depends(get_graphiti)):
-    ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
-    ep = await graphiti.add_episode(
-        name=payload.name,
-        episode_body=payload.data,   # <<< đổi từ payload.json -> payload.data
-        source=EpisodeType.json,
-        source_description=payload.source_description,
-        reference_time=ts,
-        group_id=payload.group_id,
-    )
+    tracker = get_global_tracker()
+    tracker.set_episode_context(payload.name)
     
-    # Invalidate search cache khi có dữ liệu mới
-    invalidate_search_cache()
-    
-    return {"episode_id": getattr(ep, "id", payload.name)}
+    try:
+        ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
+        ep = await graphiti.add_episode(
+            name=payload.name,
+            episode_body=payload.data,   # <<< đổi từ payload.json -> payload.data
+            source=EpisodeType.json,
+            source_description=payload.source_description,
+            reference_time=ts,
+            group_id=payload.group_id,
+        )
+        
+        # Invalidate search cache khi có dữ liệu mới
+        invalidate_search_cache()
+        
+        return {"episode_id": getattr(ep, "id", payload.name)}
+    finally:
+        tracker.clear_episode_context()
 
 # Cache management endpoints
 @app.get("/cache/stats")
@@ -467,6 +502,8 @@ async def ingest_code_change(payload: IngestCodeChange, graphiti=Depends(get_gra
     from app.importance import get_scorer
     
     logger = logging.getLogger(__name__)
+    tracker = get_global_tracker()
+    tracker.set_episode_context(payload.name)
     
     try:
         # Score importance with LLM
@@ -514,6 +551,8 @@ async def ingest_code_change(payload: IngestCodeChange, graphiti=Depends(get_gra
     except Exception as e:
         logger.error(f"Failed to ingest code change: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to ingest code change: {str(e)}")
+    finally:
+        tracker.clear_episode_context()
 
 
 # =============================================================================
@@ -532,6 +571,8 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
     from app.graph import add_episode_with_ttl, add_code_metadata
     
     logger = logging.getLogger(__name__)
+    tracker = get_global_tracker()
+    tracker.set_episode_context(payload.name)
     
     # DEBUG: Check if payload contains DateTime objects
     try:
@@ -717,6 +758,8 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
             logger.error(f"Error ingesting code context: {error_msg}")
             logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to ingest code context: {error_msg}")
+    finally:
+        tracker.clear_episode_context()
 
 @app.post("/search/code")
 async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
@@ -902,3 +945,292 @@ async def get_stats(project_id: str, graphiti=Depends(get_graphiti)):
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+# =============================================================================
+# GRAPHITI TOKEN TRACKING ENDPOINTS
+# =============================================================================
+
+@app.get("/graphiti/tokens/stats")
+async def get_graphiti_token_stats():
+    """Get overall Graphiti token usage statistics"""
+    tracker = get_global_tracker()
+    return tracker.get_total_stats()
+
+@app.get("/graphiti/tokens/operations")
+async def get_graphiti_operations():
+    """Get breakdown by Graphiti operation type"""
+    tracker = get_global_tracker()
+    return tracker.get_operation_breakdown()
+
+@app.get("/graphiti/tokens/episode/{episode_id}")
+async def get_graphiti_episode_stats(episode_id: str):
+    """Get token statistics for a specific episode"""
+    tracker = get_global_tracker()
+    return tracker.get_episode_summary(episode_id)
+
+@app.get("/graphiti/tokens/export")
+async def export_graphiti_tokens():
+    """Export complete Graphiti token tracking data"""
+    tracker = get_global_tracker()
+    return tracker.export_to_dict()
+
+@app.get("/graphiti/tokens/summary")
+async def get_graphiti_summary():
+    """Get human-readable summary of Graphiti token usage"""
+    tracker = get_global_tracker()
+    return {"summary": tracker.get_summary_text()}
+
+@app.get("/graphiti/entities/stats")
+async def get_entity_stats(graphiti=Depends(get_graphiti)):
+    """Get statistics about entities created by Graphiti"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Query for overall entity stats
+        query_total = """
+        MATCH (e:Entity)
+        RETURN count(e) as total_entities,
+               count(DISTINCT e.group_id) as unique_groups,
+               count(DISTINCT e.name) as unique_entity_names
+        """
+        
+        # Query for entities by group
+        query_by_group = """
+        MATCH (e:Entity)
+        WHERE e.group_id IS NOT NULL
+        RETURN e.group_id as group_id,
+               count(e) as entity_count
+        ORDER BY entity_count DESC
+        LIMIT 10
+        """
+        
+        # Query for top entities
+        query_top_entities = """
+        MATCH (e:Entity)
+        RETURN e.name as name,
+               e.summary as summary,
+               e.group_id as group_id,
+               e.created_at as created_at
+        ORDER BY e.created_at DESC
+        LIMIT 20
+        """
+        
+        # Query for entities with relationships
+        query_relationships = """
+        MATCH (e:Entity)
+        OPTIONAL MATCH (e)-[r]-()
+        RETURN e.name as entity,
+               count(r) as relationship_count
+        ORDER BY relationship_count DESC
+        LIMIT 10
+        """
+        
+        total_stats = {}
+        by_group = []
+        top_entities = []
+        top_connected = []
+        
+        async with graphiti.driver.session() as session:
+            # Get total stats
+            result = await session.run(query_total)
+            record = await result.single()
+            if record:
+                total_stats = {
+                    "total_entities": record["total_entities"],
+                    "unique_groups": record["unique_groups"],
+                    "unique_entity_names": record["unique_entity_names"]
+                }
+            
+            # Get by group
+            result = await session.run(query_by_group)
+            async for record in result:
+                by_group.append({
+                    "group_id": record["group_id"],
+                    "entity_count": record["entity_count"]
+                })
+            
+            # Get top entities
+            result = await session.run(query_top_entities)
+            async for record in result:
+                top_entities.append({
+                    "name": record["name"],
+                    "summary": record["summary"][:100] if record["summary"] else None,
+                    "group_id": record["group_id"],
+                    "created_at": str(record["created_at"]) if record["created_at"] else None
+                })
+            
+            # Get most connected entities
+            result = await session.run(query_relationships)
+            async for record in result:
+                if record["relationship_count"] > 0:
+                    top_connected.append({
+                        "entity": record["entity"],
+                        "relationships": record["relationship_count"]
+                    })
+        
+        return {
+            "total_stats": total_stats,
+            "by_group": by_group,
+            "top_entities": top_entities,
+            "most_connected": top_connected
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting entity stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get entity stats: {str(e)}")
+
+# =============================================================================
+# SHORT TERM MEMORY ENDPOINTS
+# =============================================================================
+
+@app.post("/short-term/save")
+async def save_short_term_message(request: ShortTermMemoryRequest):
+    """
+    Lưu message vào short term memory
+    
+    Sử dụng LLM để trích xuất và phân loại thông tin tự động
+    """
+    try:
+        storage = get_storage()
+        message_id = await storage.save_message(request)
+        
+        return {
+            "status": "success",
+            "message_id": message_id,
+            "message": "Message saved to short term memory"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error saving short term message: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save message: {str(e)}")
+
+@app.post("/short-term/search")
+async def search_short_term_messages(request: ShortTermMemorySearchRequest):
+    """
+    Tìm kiếm messages trong short term memory
+    
+    Sử dụng semantic search với embedding similarity
+    """
+    try:
+        storage = get_storage()
+        results = await storage.search_messages(request)
+        
+        return {
+            "status": "success",
+            "results": results,
+            "count": len(results),
+            "query": request.query,
+            "project_id": request.project_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error searching short term messages: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to search messages: {str(e)}")
+
+@app.get("/short-term/message/{message_id}")
+async def get_short_term_message(message_id: str):
+    """
+    Lấy message theo ID
+    """
+    try:
+        storage = get_storage()
+        message = await storage.get_message(message_id)
+        
+        if not message:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        return {
+            "status": "success",
+            "message": message.dict()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting short term message {message_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get message: {str(e)}")
+
+@app.delete("/short-term/message/{message_id}")
+async def delete_short_term_message(message_id: str):
+    """
+    Xóa message theo ID
+    """
+    try:
+        storage = get_storage()
+        success = await storage.delete_message(message_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Message not found")
+        
+        return {
+            "status": "success",
+            "message": "Message deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting short term message {message_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete message: {str(e)}")
+
+@app.get("/short-term/stats/{project_id}")
+async def get_short_term_stats(project_id: str):
+    """
+    Lấy thống kê short term memory cho project
+    """
+    try:
+        storage = get_storage()
+        stats = await storage.get_stats(project_id)
+        
+        return {
+            "status": "success",
+            "project_id": project_id,
+            "stats": stats
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting short term stats for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+@app.post("/short-term/cleanup")
+async def cleanup_short_term_memory():
+    """
+    Xóa các messages đã hết hạn
+    """
+    try:
+        storage = get_storage()
+        deleted_count = await storage.cleanup_expired()
+        
+        return {
+            "status": "success",
+            "deleted_count": deleted_count,
+            "message": f"Cleaned up {deleted_count} expired messages"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up short term memory: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup: {str(e)}")
+
+@app.get("/short-term/health")
+async def short_term_health():
+    """
+    Kiểm tra sức khỏe short term memory system
+    """
+    try:
+        storage = get_storage()
+        stats = await storage.get_stats("health_check")
+        
+        return {
+            "status": "healthy",
+            "storage_dir": str(storage.storage_dir),
+            "cache_loaded": stats.get("cache_loaded", False),
+            "total_messages": stats.get("total_messages", 0)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking short term health: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }

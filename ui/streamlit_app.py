@@ -16,6 +16,18 @@ from app.prompts import format_decision_prompt, format_system_prompt, format_sum
 # Import token tracker
 from token_tracker import get_tracker, display_token_metrics, format_token_badge
 
+# Import Graphiti token tracker UI
+from graphiti_token_ui import render_graphiti_token_tab, display_graphiti_compact_metrics, get_graphiti_tracker
+
+# Import short term memory integration
+from app.short_term_integration import get_integration, save_chat_message
+
+# Force reload to ensure latest version
+import importlib
+import app.short_term_integration
+importlib.reload(app.short_term_integration)
+from app.short_term_integration import get_integration, save_chat_message
+
 # Load .env placed at memory_layer/.env so UI and API share config
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 
@@ -47,6 +59,183 @@ def post_json_timeout(path: str, payload: dict, timeout_sec: int = 8):
         return False, {"error": str(exc), "url": url}
 
 
+def save_to_short_term_memory(role: str, content: str, project_id: str, conversation_id: str, **kwargs):
+    """
+    Helper function để lưu message vào short term memory
+    
+    Args:
+        role: "user", "assistant", "system"
+        content: Nội dung message
+        project_id: ID dự án
+        conversation_id: ID cuộc trò chuyện
+        **kwargs: Các tham số khác (file_path, function_name, etc.)
+    """
+    try:
+        # Sử dụng asyncio để chạy async function
+        import asyncio
+        
+        # Tạo event loop nếu chưa có
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Chạy async function
+        message_id = loop.run_until_complete(
+            save_chat_message(role, content, project_id, conversation_id, **kwargs)
+        )
+        
+        if message_id:
+            st.session_state.setdefault("short_term_saved", []).append({
+                "role": role,
+                "message_id": message_id,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+        return message_id
+        
+    except Exception as e:
+        st.error(f"Error saving to short term memory: {e}")
+        return None
+
+
+def extract_code_context_from_message(content: str):
+    """
+    Trích xuất thông tin code context từ message content
+    
+    Args:
+        content: Nội dung message
+        
+        Returns:
+            Dict chứa file_path, function_name, line_start, line_end, code_changes
+            - line_start/line_end: Vị trí dòng nơi code changes được thêm vào
+    """
+    import re
+    
+    code_info = {
+        "file_path": None,
+        "function_name": None,
+        "line_start": None,
+        "line_end": None,
+        "code_changes": None
+    }
+    
+    try:
+        # Tìm file path patterns
+        file_patterns = [
+            r'file\s+([^\s]+\.(py|js|ts|java|cpp|c|h|html|css|json|yaml|yml|xml|md|txt))',
+            r'([^\s]+\.(py|js|ts|java|cpp|c|h|html|css|json|yaml|yml|xml|md|txt))',
+            r'path\s+([^\s]+)',
+            r'đường\s+dẫn\s+([^\s]+)'
+        ]
+        
+        for pattern in file_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                code_info["file_path"] = match.group(1)
+                break
+        
+        # Tìm function name patterns
+        function_patterns = [
+            r'function\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+            r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+            r'function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+            r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+            r'hàm\s+([a-zA-Z_][a-zA-Z0-9_]*)'
+        ]
+        
+        for pattern in function_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                code_info["function_name"] = match.group(1)
+                break
+        
+        # Tìm line number patterns
+        line_patterns = [
+            r'dòng\s+(\d+)',
+            r'line\s+(\d+)',
+            r'(\d+)\s*dòng',
+            r'(\d+)\s*line'
+        ]
+        
+        for pattern in line_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                line_num = int(match.group(1))
+                code_info["line_start"] = line_num
+                code_info["line_end"] = line_num
+                break
+        
+        # Tìm range patterns
+        range_patterns = [
+            r'dòng\s+(\d+)\s*-\s*(\d+)',
+            r'line\s+(\d+)\s*-\s*(\d+)',
+            r'(\d+)\s*-\s*(\d+)\s*dòng',
+            r'(\d+)\s*-\s*(\d+)\s*line'
+        ]
+        
+        for pattern in range_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                code_info["line_start"] = int(match.group(1))
+                code_info["line_end"] = int(match.group(2))
+                break
+        
+        # Phát hiện code changes (AI đã chỉnh sửa code)
+        code_change_patterns = [
+            r'```(\w+)?\n(.*?)\n```',  # Code blocks
+            r'đã thêm\s+(.*?)(?:\n|$)',  # "đã thêm ..."
+            r'đã sửa\s+(.*?)(?:\n|$)',   # "đã sửa ..."
+            r'đã xóa\s+(.*?)(?:\n|$)',   # "đã xóa ..."
+            r'đã refactor\s+(.*?)(?:\n|$)',  # "đã refactor ..."
+            r'da them\s+(.*?)(?:\n|$)',  # "da them ..."
+            r'da sua\s+(.*?)(?:\n|$)',   # "da sua ..."
+            r'da xoa\s+(.*?)(?:\n|$)',   # "da xoa ..."
+            r'da refactor\s+(.*?)(?:\n|$)',  # "da refactor ..."
+        ]
+        
+        for pattern in code_change_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE | re.DOTALL)
+            if matches:
+                # Tạo code_changes object
+                code_changes = {
+                    "change_type": "modified",  # Default
+                    "description": "Code changes detected",
+                    "code_blocks": []
+                }
+                
+                for match in matches:
+                    if isinstance(match, tuple):
+                        language, code = match
+                        code_changes["code_blocks"].append({
+                            "language": language or "text",
+                            "code": code.strip()
+                        })
+                    else:
+                        code_changes["code_blocks"].append({
+                            "language": "text",
+                            "code": match.strip()
+                        })
+                
+                # Xác định change_type dựa trên keywords
+                if any(word in content.lower() for word in ['thêm', 'them', 'added', 'add']):
+                    code_changes["change_type"] = "added"
+                elif any(word in content.lower() for word in ['xóa', 'xoa', 'deleted', 'delete', 'remove']):
+                    code_changes["change_type"] = "deleted"
+                elif any(word in content.lower() for word in ['refactor', 'refactored']):
+                    code_changes["change_type"] = "refactored"
+                
+                code_info["code_changes"] = code_changes
+                break
+        
+        return code_info
+        
+    except Exception as e:
+        st.error(f"Error extracting code context: {e}")
+        return code_info
+
+
 def get_json(path: str):
     """GET request to API"""
     base = get_api_base_url()
@@ -66,10 +255,11 @@ st.caption("Chat, ingest episodes and run search against the FastAPI server")
 api_base = get_api_base_url()
 st.info(f"API base: {api_base}")
 
-# Initialize token tracker
+# Initialize token trackers
 tracker = get_tracker()
+graphiti_tracker = get_graphiti_tracker()
 
-tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Token Usage", "Debug"])
+tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Token Usage", "Graphiti Tokens", "Debug"])
 
 # ---------------------------- Chat Tab ----------------------------
 with tabs[0]:
@@ -106,6 +296,20 @@ with tabs[0]:
     with col3:
         show_memories = st.checkbox("Show related memories", value=st.session_state.get("show_memories", True), key="show_mem_cb")
         st.session_state.show_memories = show_memories
+    
+    # Short term memory controls
+    col4, col5, col6 = st.columns([1, 1, 1])
+    with col4:
+        enable_short_term = st.checkbox("Enable Short Term Memory", value=st.session_state.get("enable_short_term_memory", True), key="short_term_cb",
+                                      help="Automatically save messages to short term memory with LLM analysis")
+        st.session_state.enable_short_term_memory = enable_short_term
+    with col5:
+        project_id = st.text_input("Project ID", value=st.session_state.get("project_id", "default_project"), key="project_id_input",
+                                 help="Project identifier for short term memory")
+        st.session_state.project_id = project_id
+    with col6:
+        if st.button("View Short Term Stats", key="short_term_stats_btn"):
+            st.session_state.show_short_term_stats = True
 
     col4, col5, col6 = st.columns([1, 1, 1])
     with col4:
@@ -144,7 +348,7 @@ with tabs[0]:
     current_window = st.session_state.get("short_term_window", 5)
     
     st.markdown("### 🧠 Memory Configuration")
-    col_info1, col_info2, col_info3 = st.columns(3)
+    col_info1, col_info2, col_info3, col_info4 = st.columns(4)
     with col_info1:
         if current_n == 1:
             st.info("💾 **Mid-term:** Direct save - Each turn → KG immediately")
@@ -163,6 +367,9 @@ with tabs[0]:
                    f"💰 **Cost:** ${cost:.4f}")
         else:
             st.info("🔢 **This Chat:** 0\n\nNo usage yet")
+    with col_info4:
+        # Display Graphiti token usage (if any)
+        display_graphiti_compact_metrics(graphiti_tracker)
 
     # Group ID Management
     st.markdown("### 🔑 Conversation Group ID")
@@ -253,6 +460,27 @@ with tabs[0]:
         })
         with st.chat_message("user"):
             st.markdown(user_input)
+        
+        # Save user message to short term memory
+        if st.session_state.get("enable_short_term_memory", True):
+            try:
+                # Extract code context from user input
+                code_context = extract_code_context_from_message(user_input)
+                
+                # Save to short term memory
+                message_id = save_to_short_term_memory(
+                    role="user",
+                    content=user_input,
+                    project_id=st.session_state.get("project_id", "default_project"),
+                    conversation_id=st.session_state.group_id,
+                    **code_context
+                )
+                
+                if message_id:
+                    st.caption(f"💾 Saved to short term memory: {message_id[:8]}...")
+                    
+            except Exception as e:
+                st.error(f"Error saving user message to short term memory: {e}")
 
         # Save this user turn
         if auto_save and not pause_saving and not summarize_to_memory:
@@ -451,6 +679,27 @@ with tabs[0]:
         
         with st.chat_message("assistant"):
             st.markdown(assistant_reply)
+            
+            # Save assistant message to short term memory
+            if st.session_state.get("enable_short_term_memory", True):
+                try:
+                    # Extract code context from assistant reply
+                    code_context = extract_code_context_from_message(assistant_reply)
+                    
+                    # Save to short term memory
+                    message_id = save_to_short_term_memory(
+                        role="assistant",
+                        content=assistant_reply,
+                        project_id=st.session_state.get("project_id", "default_project"),
+                        conversation_id=st.session_state.group_id,
+                        **code_context
+                    )
+                    
+                    if message_id:
+                        st.caption(f"💾 Saved to short term memory: {message_id[:8]}...")
+                        
+                except Exception as e:
+                    st.error(f"Error saving assistant message to short term memory: {e}")
             
             # Display token usage badge for this message
             if message_token_usage:
@@ -1501,8 +1750,12 @@ with tabs[4]:
     - ⭐ **Importance**: Fact importance scoring
     """)
 
-# ---------------------------- Debug Tab ----------------------------
+# ---------------------------- Graphiti Tokens Tab ----------------------------
 with tabs[5]:
+    render_graphiti_token_tab()
+
+# ---------------------------- Debug Tab ----------------------------
+with tabs[6]:
     st.subheader("Debug Tools")
     
     st.markdown("### Check Episodes by Group ID")
@@ -1549,12 +1802,97 @@ with tabs[5]:
                 st.warning("Please enter a group_id")
     
     st.markdown("---")
+    
+    # Short Term Memory Stats
+    st.markdown("### Short Term Memory Stats")
+    if st.button("Get Short Term Memory Stats", key="short_term_stats"):
+        try:
+            base = get_api_base_url()
+            project_id = st.session_state.get("project_id", "default_project")
+            resp = requests.get(f"{base}/short-term/stats/{project_id}", timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if data.get("status") == "success":
+                stats = data.get("stats", {})
+                st.success(f"Short Term Memory Stats for project: {project_id}")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Messages", stats.get("total_messages", 0))
+                with col2:
+                    st.metric("Cache Loaded", "Yes" if stats.get("cache_loaded", False) else "No")
+                with col3:
+                    st.metric("Conversations", len(stats.get("by_conversation", {})))
+                
+                # Show breakdown by role
+                if stats.get("by_role"):
+                    st.markdown("**By Role:**")
+                    for role, count in stats["by_role"].items():
+                        st.write(f"- {role}: {count}")
+                
+                # Show breakdown by intent
+                if stats.get("by_intent"):
+                    st.markdown("**By Intent:**")
+                    for intent, count in stats["by_intent"].items():
+                        st.write(f"- {intent}: {count}")
+                
+                # Show conversations
+                if stats.get("by_conversation"):
+                    st.markdown("**Conversations:**")
+                    for conv_id, count in list(stats["by_conversation"].items())[:5]:  # Show first 5
+                        st.write(f"- {conv_id}: {count} messages")
+                
+            else:
+                st.error(f"Error getting stats: {data.get('message', 'Unknown error')}")
+                
+        except Exception as e:
+            st.error(f"Error: {e}")
+    
+    # Short Term Memory Health Check
+    if st.button("Check Short Term Memory Health", key="short_term_health"):
+        try:
+            base = get_api_base_url()
+            resp = requests.get(f"{base}/short-term/health", timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if data.get("status") == "healthy":
+                st.success("Short Term Memory is healthy")
+                st.json(data)
+            else:
+                st.error(f"Short Term Memory is unhealthy: {data.get('error', 'Unknown error')}")
+                
+        except Exception as e:
+            st.error(f"Error: {e}")
+    
+    # Cleanup expired messages
+    if st.button("Cleanup Expired Messages", key="short_term_cleanup"):
+        try:
+            base = get_api_base_url()
+            resp = requests.post(f"{base}/short-term/cleanup", timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if data.get("status") == "success":
+                deleted_count = data.get("deleted_count", 0)
+                st.success(f"Cleaned up {deleted_count} expired messages")
+            else:
+                st.error(f"Error: {data.get('message', 'Unknown error')}")
+                
+        except Exception as e:
+            st.error(f"Error: {e}")
+    
+    st.markdown("---")
     st.markdown("### Current Session Info")
     st.json({
         "current_group_id": st.session_state.get("group_id", "Not set"),
         "chat_messages_count": len(st.session_state.get("chat_messages", [])),
         "mem_buffer_size": len(st.session_state.get("mem_buffer", [])),
-        "mem_user_count": st.session_state.get("mem_user_count", 0)
+        "mem_user_count": st.session_state.get("mem_user_count", 0),
+        "short_term_saved": len(st.session_state.get("short_term_saved", [])),
+        "project_id": st.session_state.get("project_id", "default_project"),
+        "enable_short_term_memory": st.session_state.get("enable_short_term_memory", True)
     })
 
 
