@@ -541,3 +541,156 @@ def format_code_bug_pattern(bug_fix: str) -> str:
 def format_code_review(code: str, context: str = "") -> str:
     """Format code review prompt with context."""
     return CODE_REVIEW_PROMPT.format(code=code, context=context or "No specific context provided")
+
+# =============================================================================
+# CONVERSATION CONTEXT PROMPTS - Phase 1.5: Midterm Memory
+# =============================================================================
+
+CONVERSATION_SUMMARY_PROMPT = """Extract a rich, searchable summary from this coding conversation for knowledge graph storage.
+
+**Your goal:** Create a summary that will help future searches find this conversation when relevant.
+
+**Include:**
+1. **Main Topic/Action** - What was the primary focus? (e.g., "Fixed bug", "Analyzed system", "Implemented feature")
+2. **Technical Details** - Specific files, functions, technologies, algorithms mentioned
+3. **Problem & Solution** - If a bug fix, what broke and how it was fixed
+4. **Context** - Why this work was done, what it enables
+5. **Key Outcomes** - Results, decisions made, lessons learned
+
+**Format Guidelines:**
+- Use clear, descriptive language (avoid vague terms like "discussed", "looked at")
+- Include technical terminology (file paths, function names, library names)
+- Be specific about what changed or was learned
+- 3-5 sentences, technical but readable
+- Write in English for consistency
+
+**Example Good Summaries:**
+
+"Fixed critical authentication bug in backend/auth/login.py where Redis rate limiter had no TTL, causing permanent user lockouts after 5 failed attempts. Added 15-minute expiration using setex() instead of incr(). Also added clear_rate_limit() admin function and logging for locked accounts. Prevents users from being permanently blocked."
+
+"Analyzed authentication system architecture. Uses JWT tokens with 24-hour expiration and bcrypt password hashing (cost factor 12). Main components: auth/login.py (login endpoint), auth/session.py (session management via Redis), models/user.py (user model). Identified missing features: 2FA support and account lockout policy."
+
+"Implemented Two-Factor Authentication using TOTP (pyotp library). Added User model fields: totp_secret, is_2fa_enabled, recovery_codes. Created three new endpoints: /auth/2fa/setup (generates QR code), /auth/2fa/verify (validates code), /auth/2fa/disable. Updated login flow to check is_2fa_enabled flag and require TOTP code if enabled."
+
+**Conversation:**
+{conversation_text}
+
+**Context Files:**
+{context_files}
+
+**Tools Used:**
+{tools}
+
+**Rich Summary (3-5 sentences, searchable, technical):**"""
+
+CONVERSATION_EPISODE_BODY_FORMATTER = """Format this conversation into a structured episode body optimized for entity extraction.
+
+Use clear sections and technical terminology for better knowledge graph construction.
+
+**Conversation Data:**
+Chat ID: {chat_id}
+Mode: {chat_mode}
+Project: {project_id}
+
+**Messages:**
+{messages}
+
+**Context Files:**
+{context_files}
+
+**Tools:**
+{tools}
+
+**Format into structured episode body with headers and clear sections.**"""
+
+def format_conversation_summary(
+    messages: list[dict],
+    context_files: list[dict] = None,
+    tools: list[dict] = None
+) -> str:
+    """
+    Generate rich conversation summary for Graphiti
+    
+    Args:
+        messages: List of message dicts with role and content_summary
+        context_files: List of context file dicts with file_path
+        tools: List of tool call dicts with tool_name
+    
+    Returns:
+        Formatted prompt for LLM to generate summary
+    """
+    # Format conversation text
+    conv_lines = []
+    for msg in messages:
+        role = msg.get("role", "unknown").upper()
+        content = msg.get("content_summary", "")
+        conv_lines.append(f"[{role}]: {content}")
+    conversation_text = "\n\n".join(conv_lines)
+    
+    # Format context files
+    if context_files:
+        file_lines = [f"- {cf.get('file_path', 'unknown')}" for cf in context_files]
+        context_str = "\n".join(file_lines)
+    else:
+        context_str = "No context files"
+    
+    # Format tools
+    if tools:
+        tool_names = list(set([t.get("tool_name", "unknown") for t in tools]))
+        tools_str = ", ".join(tool_names)
+    else:
+        tools_str = "No tools used"
+    
+    return CONVERSATION_SUMMARY_PROMPT.format(
+        conversation_text=conversation_text,
+        context_files=context_str,
+        tools=tools_str
+    )
+
+def format_conversation_episode_body(
+    chat_id: str,
+    chat_mode: str,
+    project_id: str,
+    messages: list[dict],
+    context_files: list[dict] = None,
+    tools: list[dict] = None
+) -> str:
+    """
+    Format conversation into structured episode body
+    
+    Better structure helps Graphiti extract entities properly
+    """
+    parts = []
+    
+    # Header
+    parts.append(f"=== CODING CONVERSATION: {chat_id} ===")
+    parts.append(f"Mode: {chat_mode} | Project: {project_id}")
+    parts.append("")
+    
+    # Messages with clear structure
+    parts.append("=== CONVERSATION ===")
+    for msg in messages:
+        role = msg.get("role", "unknown").upper()
+        content = msg.get("content_summary", "")
+        parts.append(f"\n[{role}]")
+        parts.append(content)
+    parts.append("")
+    
+    # Context files
+    if context_files and len(context_files) > 0:
+        parts.append("=== CONTEXT FILES ===")
+        for cf in context_files:
+            file_path = cf.get("file_path", "unknown")
+            usefulness = cf.get("usefulness", 0.0)
+            parts.append(f"- {file_path} (relevance: {usefulness:.2f})")
+        parts.append("")
+    
+    # Tools
+    if tools and len(tools) > 0:
+        parts.append("=== TOOLS USED ===")
+        tool_names = list(set([t.get("tool_name", "unknown") for t in tools]))
+        parts.append(f"Tools: {', '.join(tool_names)}")
+        parts.append(f"Total calls: {len(tools)}")
+        parts.append("")
+    
+    return "\n".join(parts)

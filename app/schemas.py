@@ -111,3 +111,156 @@ class SearchCodeRequest(BaseModel):
     # Phase 1+ Schema Extension Filters
     language_filter: Optional[str] = None     # Filter by language: "python", "javascript", etc.
     entity_type_filter: Optional[str] = None  # Filter by entity type: "code_change" (default), "code_file", etc.
+
+
+# =============================================================================
+# PHASE 1.5: FULL CONVERSATION CONTEXT SCHEMAS
+# =============================================================================
+
+class ChatMetadata(BaseModel):
+    """Chat metadata từ Innocody ChatMeta"""
+    chat_id: str
+    base_chat_id: Optional[str] = None
+    request_attempt_id: Optional[str] = None
+    chat_mode: Optional[str] = "AGENT"  # AGENT, NO_TOOLS, etc.
+    force_initial_state: bool = False
+    chat_remote: Optional[str] = None
+
+
+class MessagePayload(BaseModel):
+    """Single chat message (user or assistant)"""
+    role: str  # "user" | "assistant" | "system"
+    content_summary: str  # Summary of content (không lưu full content)
+    content_hash: Optional[str] = None  # SHA256 hash của full content
+    
+    # Token usage
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    
+    # Tool calls (if assistant message)
+    tool_calls: List[dict] = []  # [{id, tool, args_hash}]
+    
+    # Sequence
+    sequence: int = 0  # Message order in conversation
+
+
+class ContextFilePayload(BaseModel):
+    """File context fed to model"""
+    file_path: str
+    line_start: int = 1
+    line_end: Optional[int] = None
+    
+    # Metadata
+    usefulness: Optional[float] = None  # 0.0-1.0 score from Innocody
+    source: str = "unknown"  # "vecdb" | "ast" | "manual"
+    symbols: List[str] = []  # Extracted symbols/functions
+    content_hash: str  # SHA256 (không lưu content)
+    
+    language: Optional[str] = None
+
+
+class ToolCallPayload(BaseModel):
+    """Tool invocation"""
+    tool_call_id: str
+    tool_name: str
+    arguments_hash: str  # SHA256 of arguments (không lưu full args)
+    
+    # Result
+    status: str = "success"  # "success" | "failed"
+    execution_time_ms: Optional[int] = None
+    
+    # Link to changes
+    diff_chunk_id: Optional[str] = None
+
+
+class CheckpointPayload(BaseModel):
+    """Git checkpoint/snapshot"""
+    checkpoint_id: str
+    parent_checkpoint: Optional[str] = None
+    workspace_dir: Optional[str] = None
+    git_hash: Optional[str] = None
+
+
+class ModelResponseMetadata(BaseModel):
+    """Model response metadata"""
+    model: str
+    finish_reason: Optional[str] = None
+    created: Optional[float] = None  # Unix timestamp
+    cached: bool = False
+    compression_strength: Optional[float] = None
+
+
+class CodeChangeMetadata(BaseModel):
+    """Detailed code change metadata for conversation context."""
+    # Identity
+    name: Optional[str] = None                    # Human-friendly name
+    summary: Optional[str] = None                # Optional summary
+    description: Optional[str] = None            # Optional long description
+
+    # Location info
+    file_path: str                                # Required path
+    function_name: Optional[str] = None
+    line_start: Optional[int] = None
+    line_end: Optional[int] = None
+
+    # Change info
+    change_type: Optional[str] = None             # added/modified/removed...
+    change_summary: Optional[str] = None
+    severity: Optional[str] = None
+    diff_summary: Optional[str] = None
+
+    # Metrics
+    lines_added: Optional[int] = None
+    lines_removed: Optional[int] = None
+
+    # Hashes / references
+    code_before_hash: Optional[str] = None
+    code_after_hash: Optional[str] = None
+    code_before_id: Optional[str] = None
+    code_after_id: Optional[str] = None
+
+    # Language/context
+    language: Optional[str] = None
+    imports: Optional[List[str]] = None
+
+    # Git / timestamps
+    tool_call_id: Optional[str] = None
+    diff_chunk_id: Optional[str] = None
+    git_commit: Optional[str] = None
+    timestamp: Optional[str] = None
+
+
+class IngestConversationContext(BaseModel):
+    """
+    Full conversation context ingest - Phase 1.5
+    Lưu TOÀN BỘ ngữ cảnh của 1 conversation turn
+    """
+    # Request info
+    request_id: str
+    project_id: str
+    timestamp: str  # ISO8601
+    
+    # Chat metadata
+    chat_meta: ChatMetadata
+    
+    # Messages in this turn
+    messages: List[MessagePayload]
+    
+    # Context files used
+    context_files: List[ContextFilePayload] = []
+    
+    # Tool calls
+    tool_calls: List[ToolCallPayload] = []
+    
+    # Code changes (reuse existing schema)
+    code_changes: List[CodeChangeMetadata] = []  # Detailed code change metadata
+    
+    # Checkpoints
+    checkpoints: List[CheckpointPayload] = []
+    
+    # Model response
+    model_response: Optional[ModelResponseMetadata] = None
+    
+    # Related artifacts
+    related_artifacts: List[dict] = []  # Links to logs/notes

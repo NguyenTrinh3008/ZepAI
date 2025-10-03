@@ -10,7 +10,8 @@ from app.graph import get_graphiti
 from app.graph import _graphiti  # for reset endpoint
 from app.schemas import (
     IngestText, IngestMessage, IngestJSON, SearchRequest,
-    IngestCodeChange, IngestCodeContext, SearchCodeRequest
+    IngestCodeChange, IngestCodeContext, SearchCodeRequest,
+    IngestConversationContext
 )
 from app.cache import (
     cached_with_ttl, cache_search_result, memory_cache, 
@@ -129,7 +130,7 @@ async def search(req: SearchRequest, graphiti=Depends(get_graphiti)):
         
         # item có thể là edge/node hoặc dict; ưu tiên các trường id phổ biến
         if isinstance(item, dict):
-            txt = item.get("fact") or item.get("text") or item.get("name") or str(item)
+            txt = item.get("summary") or item.get("fact") or item.get("text") or item.get("name") or str(item)
             # For edges, prefer source_node_uuid over edge uuid
             ident = (
                 item.get("source_node_uuid")  # Entity UUID (for EntityEdge)
@@ -139,8 +140,17 @@ async def search(req: SearchRequest, graphiti=Depends(get_graphiti)):
                 or item.get("id")
             )
             grp_id = item.get("group_id") or item.get("groupId")
+            name = item.get("name")
+            summary = item.get("summary") or item.get("fact") or item.get("text")
+            score = item.get("score") or item.get("similarity")
         else:
-            txt = getattr(item, "fact", None) or getattr(item, "text", None) or getattr(item, "name", None) or str(item)
+            txt = (
+                getattr(item, "summary", None)
+                or getattr(item, "fact", None)
+                or getattr(item, "text", None)
+                or getattr(item, "name", None)
+                or str(item)
+            )
             # For EntityEdge objects, use source_node_uuid (the actual entity)
             ident = (
                 getattr(item, "source_node_uuid", None)  # Entity UUID (for EntityEdge)
@@ -150,6 +160,9 @@ async def search(req: SearchRequest, graphiti=Depends(get_graphiti)):
                 or getattr(item, "id", None)
             )
             grp_id = getattr(item, "group_id", None) or getattr(item, "groupId", None)
+            name = getattr(item, "name", None)
+            summary = getattr(item, "summary", None) or getattr(item, "fact", None) or getattr(item, "text", None)
+            score = getattr(item, "score", None)
         
         # Debug logging
         logger.info(f"Normalize: type={type(item).__name__}, text={txt[:50] if txt else 'N/A'}, id={ident}, group_id={grp_id}")
@@ -158,15 +171,65 @@ async def search(req: SearchRequest, graphiti=Depends(get_graphiti)):
             logger.warning(f"Search result missing group_id: {type(item)} - {txt[:50] if txt else 'N/A'}")
         if not ident:
             logger.warning(f"Search result missing ID: {type(item)} - {txt[:50] if txt else 'N/A'}, item_keys={list(item.keys()) if isinstance(item, dict) else dir(item)}")
-        
-        return {"text": txt, "id": ident, "group_id": grp_id}
+        return {
+            "text": txt,
+            "summary": summary or txt,
+            "name": name,
+            "id": ident,
+            "group_id": grp_id,
+            "score": score
+        }
 
     # Normalize then deduplicate and filter self-echoes of the query
     normalized = [normalize(r) for r in results]
 
+    # Enrich items missing descriptive text using Neo4j metadata
+    metadata_needed = [item for item in normalized if not (item.get("text") and item.get("text").strip() and item.get("text").strip().lower() not in {"unknown", "..."})]
+    if metadata_needed:
+        uuids = [item.get("id") for item in metadata_needed if item.get("id")]
+        if uuids:
+            meta_query = """
+            MATCH (n)
+            WHERE n.uuid IN $uuids
+            RETURN n.uuid as uuid,
+                   n.name as name,
+                   n.summary as summary,
+                   n.episode_body as episode_body,
+                   labels(n) as labels
+            """
+            metadata_map = {}
+            async with graphiti.driver.session() as session:
+                result = await session.run(meta_query, {"uuids": uuids})
+                async for record in result:
+                    metadata_map[record["uuid"]] = {
+                        "name": record["name"],
+                        "summary": record["summary"],
+                        "episode_body": record.get("episode_body"),
+                        "labels": record.get("labels")
+                    }
+            for item in metadata_needed:
+                meta = metadata_map.get(item.get("id"))
+                if not meta:
+                    continue
+                summary_val = meta.get("summary")
+                summary = summary_val.strip() if isinstance(summary_val, str) else (str(summary_val).strip() if summary_val is not None else "")
+                name_val = meta.get("name")
+                name = name_val.strip() if isinstance(name_val, str) else (str(name_val).strip() if name_val is not None else "")
+                episode_val = meta.get("episode_body")
+                episode = episode_val.strip() if isinstance(episode_val, str) else (str(episode_val).strip() if episode_val is not None else "")
+
+                chosen_text = summary or episode or item.get("text") or name or ""
+                # Trim overly long episode bodies
+                if len(chosen_text) > 400:
+                    chosen_text = chosen_text[:397] + "..."
+                item["text"] = chosen_text
+                item["summary"] = item.get("summary") or chosen_text
+                item["name"] = item.get("name") or name or "Conversation"
+
     # If group_id filtering is requested but results don't have group_id, query Neo4j directly
     if req.group_id:
         missing_group_ids = [item for item in normalized if not item.get("group_id")]
+
         
         if missing_group_ids:
             # Fetch group_ids from Neo4j for items missing them
@@ -210,6 +273,17 @@ async def search(req: SearchRequest, graphiti=Depends(get_graphiti)):
     q = (req.query or "").strip()
     q_variants = {q, f"user: {q}", f"assistant: {q}"}
     filtered = [it for it in deduped if (it.get("text") or "").strip() not in q_variants]
+
+    # Finalize: ensure name/summary present, fallback to trimmed text
+    for item in filtered:
+        summary_text = item.get("summary") or item.get("text") or ""
+        if summary_text and len(summary_text) > 400:
+            summary_text = summary_text[:397] + "..."
+        item["summary"] = summary_text
+        if not item.get("name"):
+            item["name"] = summary_text[:80] + ("..." if len(summary_text) > 80 else "") if summary_text else "Conversation"
+        if item.get("score") is None:
+            item["score"] = 0.0
 
     # Cache kết quả với TTL 30 phút
     result = {"results": filtered}
@@ -839,6 +913,290 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
             logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to ingest code context: {error_msg}")
 
+
+# =============================================================================
+# PHASE 1.5: CONVERSATION CONTEXT ENDPOINT
+# =============================================================================
+
+@app.post("/ingest/conversation")
+async def ingest_conversation(payload: IngestConversationContext, graphiti=Depends(get_graphiti)):
+    """
+    Ingest full conversation context - Phase 1.5
+    
+    Creates entities:
+    - Request node (root)
+    - Message nodes (user/assistant messages)
+    - ContextFile nodes (files from VecDB/AST)
+    - ToolCall nodes (tool invocations)
+    - Checkpoint nodes (git snapshots)
+    - CodeChange nodes (reuse existing logic)
+    
+    With relationships linking them all together.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from datetime import timedelta
+        import asyncio
+        
+        logger.info(f"📥 Ingesting conversation context for request: {payload.request_id}")
+        
+        # Use structured prompts for better episode body
+        from app.prompts import format_conversation_episode_body
+        from app.conversation_graph import (
+            create_request_node,
+            create_message_node,
+            create_context_file_node,
+            create_tool_call_node,
+            create_checkpoint_node,
+            create_code_change_node,
+        )
+        
+        total_tokens = payload.messages[-1].total_tokens if payload.messages and payload.messages[-1].total_tokens else 0
+        model = payload.model_response.model if payload.model_response else "unknown"
+        
+        # Convert Pydantic models to dicts for prompts
+        messages_dicts = [
+            {
+                "role": msg.role,
+                "content_summary": msg.content_summary
+            }
+            for msg in payload.messages
+        ]
+        
+        context_files_dicts = [
+            {
+                "file_path": cf.file_path,
+                "usefulness": cf.usefulness
+            }
+            for cf in payload.context_files
+        ] if payload.context_files else None
+        
+        tool_calls_dicts = [
+            {
+                "tool_name": tc.tool_name
+            }
+            for tc in payload.tool_calls
+        ] if payload.tool_calls else None
+        
+        # Use prompt formatter for better structure
+        conversation_summary = format_conversation_episode_body(
+            chat_id=payload.chat_meta.chat_id,
+            chat_mode=payload.chat_meta.chat_mode,
+            project_id=payload.project_id,
+            messages=messages_dicts,
+            context_files=context_files_dicts,
+            tools=tool_calls_dicts
+        )
+        
+        # Build human-readable summary for search results
+        summary_parts = []
+        for msg in payload.messages[:2]:
+            if msg.content_summary:
+                snippet = msg.content_summary.strip().replace("\n", " ")
+                if len(snippet) > 160:
+                    snippet = snippet[:157] + "..."
+                summary_parts.append(f"{msg.role.upper()}: {snippet}")
+        if payload.context_files:
+            file_list = ", ".join([cf.file_path for cf in payload.context_files[:3]])
+            summary_parts.append(f"FILES: {file_list}")
+        if payload.tool_calls:
+            tool_list = ", ".join(sorted({tc.tool_name for tc in payload.tool_calls}))
+            summary_parts.append(f"TOOLS: {tool_list}")
+        entity_summary = " | ".join(summary_parts) if summary_parts else "Conversation context"
+        entity_name = f"Conversation {payload.chat_meta.chat_id}"
+
+        ts = datetime.fromisoformat(payload.timestamp.replace('Z', ''))
+        
+        episode = await graphiti.add_episode(
+            name=entity_name,
+            episode_body=conversation_summary,
+            source=EpisodeType.text,
+            source_description="conversation",
+            reference_time=ts,
+            group_id=payload.project_id
+        )
+        
+        logger.info("✓ Episode created, waiting for entity and embeddings...")
+        
+        # Wait for entity creation and embedding generation (Graphiti needs ~3s)
+        await asyncio.sleep(3)
+        
+        # Find created entity
+        query = """
+        MATCH (e:Entity {group_id: $group_id})
+        WHERE e.created_at >= datetime($reference_time)
+        RETURN e.uuid as uuid
+        ORDER BY e.created_at DESC
+        LIMIT 1
+        """
+        
+        request_uuid = None
+        async with graphiti.driver.session() as session:
+            result = await session.run(query, {
+                "group_id": payload.project_id,
+                "reference_time": (ts - timedelta(seconds=10)).isoformat()
+            })
+            record = await result.single()
+            if record:
+                request_uuid = record["uuid"]
+        
+        if not request_uuid:
+            raise Exception("Failed to create conversation entity")
+        
+        logger.info(f"✓ Entity created: {request_uuid}")
+        
+        # Add all metadata via Cypher
+        expires_at = ts + timedelta(days=2)
+        
+        metadata_query = """
+        MATCH (e:Entity {uuid: $uuid})
+        SET e.entity_type = 'request',
+            e.name = $name,
+            e.project_id = $project_id,
+            e.request_id = $request_id,
+            e.chat_id = $chat_id,
+            e.chat_mode = $chat_mode,
+            e.model = $model,
+            e.total_tokens = $total_tokens,
+            e.message_count = $message_count,
+            e.context_file_count = $context_file_count,
+            e.tool_call_count = $tool_call_count,
+            e.summary = $summary,
+            e.expires_at = $expires_at
+        SET e:Request
+        RETURN e.uuid as uuid
+        """
+        
+        async with graphiti.driver.session() as session:
+            await session.run(metadata_query, {
+                "uuid": request_uuid,
+                "name": entity_name,
+                "project_id": payload.project_id,
+                "request_id": payload.request_id,
+                "chat_id": payload.chat_meta.chat_id,
+                "chat_mode": payload.chat_meta.chat_mode,
+                "model": model,
+                "total_tokens": total_tokens,
+                "message_count": len(payload.messages),
+                "context_file_count": len(payload.context_files),
+                "tool_call_count": len(payload.tool_calls),
+                "summary": entity_summary,
+                "expires_at": expires_at.isoformat() + 'Z'
+            })
+        
+        # Create detailed graph structure
+        request_node_uuid = await create_request_node(
+            graphiti=graphiti,
+            request_id=payload.request_id,
+            project_id=payload.project_id,
+            chat_meta=payload.chat_meta,
+            timestamp=payload.timestamp,
+            model=model,
+            total_tokens=total_tokens
+        )
+        logger.info(f"Request node created: {request_node_uuid}")
+        
+        # Messages
+        for msg in payload.messages:
+            try:
+                await create_message_node(
+                    graphiti=graphiti,
+                    request_uuid=request_node_uuid,
+                    request_id=payload.request_id,
+                    message=msg,
+                    timestamp=payload.timestamp,
+                    project_id=payload.project_id
+                )
+            except Exception as message_error:
+                logger.warning(f"Failed to create message node: {message_error}")
+        
+        # Context files
+        for cf in payload.context_files or []:
+            try:
+                await create_context_file_node(
+                    graphiti=graphiti,
+                    request_uuid=request_node_uuid,
+                    request_id=payload.request_id,
+                    context_file=cf,
+                    timestamp=payload.timestamp,
+                    project_id=payload.project_id
+                )
+            except Exception as ctx_error:
+                logger.warning(f"Failed to create context file node: {ctx_error}")
+        
+        # Tool calls
+        for tc in payload.tool_calls or []:
+            try:
+                await create_tool_call_node(
+                    graphiti=graphiti,
+                    request_uuid=request_node_uuid,
+                    request_id=payload.request_id,
+                    tool_call=tc,
+                    timestamp=payload.timestamp,
+                    project_id=payload.project_id
+                )
+            except Exception as tool_error:
+                logger.warning(f"Failed to create tool call node: {tool_error}")
+        
+        # Checkpoints
+        for cp in payload.checkpoints or []:
+            try:
+                await create_checkpoint_node(
+                    graphiti=graphiti,
+                    request_uuid=request_node_uuid,
+                    request_id=payload.request_id,
+                    checkpoint=cp,
+                    timestamp=payload.timestamp,
+                    project_id=payload.project_id
+                )
+            except Exception as checkpoint_error:
+                logger.warning(f"Failed to create checkpoint node: {checkpoint_error}")
+        
+        # Code changes (link to code files)
+        for cc in payload.code_changes or []:
+            try:
+                await create_code_change_node(
+                    graphiti=graphiti,
+                    request_uuid=request_node_uuid,
+                    request_id=payload.request_id,
+                    code_change=cc,
+                    timestamp=payload.timestamp,
+                    project_id=payload.project_id
+                )
+            except Exception as code_error:
+                logger.warning(f"Failed to create code change node: {code_error}")
+
+        # Invalidate cache
+        invalidate_search_cache()
+        
+        logger.info(f"✅ Conversation context ingested successfully!")
+        
+        return {
+            "status": "success",
+            "request_uuid": request_node_uuid,
+            "request_id": payload.request_id,
+            "entity_type": "request",
+            "metadata": {
+                "chat_id": payload.chat_meta.chat_id,
+                "model": model,
+                "total_tokens": total_tokens,
+                "message_count": len(payload.messages),
+                "context_file_count": len(payload.context_files),
+                "tool_call_count": len(payload.tool_calls),
+                "summary": entity_summary
+            },
+            "expires_at": expires_at.isoformat() + 'Z'
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error ingesting conversation context: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to ingest conversation context: {str(e)}")
+
+
 @app.post("/search/code")
 async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
     """
@@ -1064,3 +1422,169 @@ async def get_stats(project_id: str, graphiti=Depends(get_graphiti)):
     except Exception as e:
         logger.error(f"Error getting stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+
+# =============================================================================
+# PHASE 1.5: CONVERSATION CONTEXT SEARCH ENDPOINTS
+# =============================================================================
+
+@app.get("/conversation/requests/{project_id}")
+async def get_conversation_requests(
+    project_id: str,
+    chat_id: str = None,
+    days_ago: int = 7,
+    graphiti=Depends(get_graphiti)
+):
+    """
+    Get all conversation requests for a project
+    
+    Args:
+        project_id: Project ID filter
+        chat_id: Optional chat ID filter
+        days_ago: Time window (default 7 days)
+    
+    Returns:
+        List of requests with metadata
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from app.conversation_graph import search_requests
+        
+        logger.info(f"Searching requests for project {project_id}, chat_id={chat_id}, days_ago={days_ago}")
+        
+        results = await search_requests(
+            graphiti=graphiti,
+            project_id=project_id,
+            chat_id=chat_id,
+            days_ago=days_ago
+        )
+        
+        return {
+            "project_id": project_id,
+            "count": len(results),
+            "requests": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error searching requests: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to search requests: {str(e)}")
+
+
+@app.get("/conversation/flow/{request_id}")
+async def get_conversation_flow(
+    request_id: str,
+    graphiti=Depends(get_graphiti)
+):
+    """
+    Get complete conversation flow for a specific request
+    
+    Returns:
+        Request with all messages, context files, tool calls
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from app.conversation_graph import get_conversation_flow as get_flow
+        
+        logger.info(f"Getting conversation flow for request {request_id}")
+        
+        result = await get_flow(graphiti=graphiti, request_id=request_id)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Request {request_id} not found")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting conversation flow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get conversation flow: {str(e)}")
+
+
+@app.get("/conversation/context-stats/{project_id}")
+async def get_context_file_stats(
+    project_id: str,
+    days_ago: int = 7,
+    graphiti=Depends(get_graphiti)
+):
+    """
+    Get context file usage statistics
+    
+    Shows which files are most frequently used as context
+    and their average usefulness scores
+    
+    Args:
+        project_id: Project ID filter
+        days_ago: Time window (default 7 days)
+    
+    Returns:
+        List of files with usage counts and usefulness metrics
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from app.conversation_graph import get_context_file_stats as get_stats
+        
+        logger.info(f"Getting context file stats for project {project_id}")
+        
+        results = await get_stats(
+            graphiti=graphiti,
+            project_id=project_id,
+            days_ago=days_ago
+        )
+        
+        return {
+            "project_id": project_id,
+            "days_ago": days_ago,
+            "count": len(results),
+            "files": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting context stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get context stats: {str(e)}")
+
+
+@app.get("/conversation/tool-stats")
+async def get_tool_stats(
+    days_ago: int = 7,
+    graphiti=Depends(get_graphiti)
+):
+    """
+    Get tool call statistics
+    
+    Shows success rates and performance metrics for each tool
+    
+    Args:
+        days_ago: Time window (default 7 days)
+    
+    Returns:
+        List of tools with success rates and execution times
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from app.conversation_graph import get_tool_statistics
+        
+        logger.info(f"Getting tool statistics for last {days_ago} days")
+        
+        results = await get_tool_statistics(
+            graphiti=graphiti,
+            days_ago=days_ago
+        )
+        
+        return {
+            "days_ago": days_ago,
+            "count": len(results),
+            "tools": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting tool stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get tool stats: {str(e)}")
