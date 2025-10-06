@@ -1,8 +1,10 @@
 # app/main.py
 import asyncio
 import os
+import json
+import time
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, UploadFile, File, Form
 from fastapi.responses import Response
 from graphiti_core import Graphiti
@@ -12,7 +14,8 @@ from app.graph import _graphiti  # for reset endpoint
 from app.schemas import (
     IngestText, IngestMessage, IngestJSON, SearchRequest,
     IngestCodeChange, IngestCodeContext, SearchCodeRequest,
-    ShortTermMemoryRequest, ShortTermMemorySearchRequest
+    ShortTermMemoryRequest, ShortTermMemorySearchRequest,
+    ConversationPayload
 )
 from app.cache import (
     cached_with_ttl, cache_search_result, memory_cache, 
@@ -25,7 +28,8 @@ from app.graphiti_estimator import estimate_and_track
 from app.short_term_storage import get_storage
 from app.file_upload_handler import get_file_upload_handler
 from app.stm_to_neo4j import import_stm_json_content
-from app.stm_to_neo4j import import_stm_json_content
+from app.conversation_storage import get_conversation_storage
+from app.json_processor import process_json_to_graphiti, process_conversation_json_to_graphiti
 
 enable_global_openai_tracking()
 app = FastAPI(title="Graphiti Memory Layer")
@@ -353,6 +357,235 @@ async def ingest_json(payload: IngestJSON, graphiti=Depends(get_graphiti)):
         return {"episode_id": getattr(ep, "id", payload.name)}
     finally:
         tracker.clear_episode_context()
+
+# =============================================================================
+# CONVERSATION STORAGE ENDPOINTS - For detailed conversation tracking
+# =============================================================================
+
+@app.post("/ingest/conversation")
+async def ingest_conversation(payload: ConversationPayload):
+    """
+    Ingest detailed conversation data and save to JSON storage + Short Term Memory
+    
+    This endpoint accepts the full conversation payload including:
+    - Messages (user, assistant, system)
+    - Context files
+    - Tool calls
+    - Code changes
+    - Metadata
+    
+    Each message will also be saved to short_term.json for memory search
+    """
+    try:
+        # Get conversation storage service
+        storage = get_conversation_storage()
+        
+        # Save conversation to JSON files
+        result = await storage.save_conversation(payload)
+        
+        if result["status"] == "success":
+            # Also save each message to Short Term Memory
+            stm_storage = get_storage()
+            stm_results = []
+            
+            for message in payload.messages:
+                try:
+                    # Create STM request for each message
+                    stm_request = ShortTermMemoryRequest(
+                        role=message.role,
+                        content=message.content,
+                        project_id=payload.project_id,
+                        conversation_id=payload.request_id,
+                        file_path=None,  # Will be extracted from context_files if needed
+                        function_name=None,
+                        line_start=None,
+                        line_end=None,
+                        code_changes=None,
+                        lines_added=0,
+                        lines_removed=0,
+                        diff_summary=None,
+                        intent=None,
+                        keywords=None,
+                        ttl=86400  # 24 hours TTL
+                    )
+                    
+                    # Save to STM
+                    stm_id = await stm_storage.save_message(stm_request)
+                    stm_results.append({
+                        "message_sequence": message.sequence,
+                        "role": message.role,
+                        "stm_id": stm_id
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to save message {message.sequence} to STM: {e}")
+                    stm_results.append({
+                        "message_sequence": message.sequence,
+                        "role": message.role,
+                        "stm_id": None,
+                        "error": str(e)
+                    })
+            
+            return {
+                "status": "success",
+                "conversation_id": result["conversation_id"],
+                "saved_paths": result["saved_paths"],
+                "metadata": result["metadata"],
+                "short_term_memory": {
+                    "messages_saved": len(stm_results),
+                    "results": stm_results
+                },
+                "message": "Conversation saved successfully to both JSON storage and Short Term Memory"
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error saving conversation: {str(e)}")
+
+@app.get("/conversation/{conversation_id}")
+async def get_conversation(conversation_id: str):
+    """Get conversation data by ID"""
+    try:
+        storage = get_conversation_storage()
+        conversation = await storage.get_conversation(conversation_id)
+        
+        if conversation:
+            return {
+                "status": "success",
+                "conversation": conversation
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving conversation: {str(e)}")
+
+@app.get("/conversations")
+async def list_conversations(project_id: str = None, date: str = None, limit: int = 50):
+    """List conversations with optional filters"""
+    try:
+        storage = get_conversation_storage()
+        conversations = await storage.list_conversations(project_id, date)
+        
+        # Apply limit
+        conversations = conversations[:limit]
+        
+        return {
+            "status": "success",
+            "count": len(conversations),
+            "conversations": conversations
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing conversations: {str(e)}")
+
+@app.get("/conversations/stats")
+async def get_conversation_stats():
+    """Get conversation storage statistics"""
+    try:
+        storage = get_conversation_storage()
+        stats = await storage.get_stats()
+        
+        return {
+            "status": "success",
+            "stats": stats
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting stats: {str(e)}")
+
+# =============================================================================
+# JSON UPLOAD & PROCESSING ENDPOINTS - For bulk data ingestion
+# =============================================================================
+
+@app.post("/upload/json-to-graph")
+async def upload_json_to_graph(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+    use_llm: bool = Form(False),
+    graphiti=Depends(get_graphiti)
+):
+    """
+    Upload JSON file and process it into Graphiti episodes for Neo4j storage
+    
+    Supports:
+    - short_term.json format (STM messages)
+    - conversation JSON format
+    - Custom JSON with messages/conversations
+    
+    Args:
+        file: JSON file to upload
+        project_id: Project identifier for grouping
+        use_llm: Whether to use LLM for enhanced processing
+    """
+    try:
+        # Read and parse JSON file
+        content = await file.read()
+        json_text = content.decode('utf-8')
+        
+        # Process JSON content
+        result = await process_json_to_graphiti(
+            json_text=json_text,
+            project_id=project_id,
+            use_llm=use_llm,
+            graphiti=graphiti
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Successfully processed {file.filename}",
+            "project_id": project_id,
+            "episodes_created": result.get("episodes_created", 0),
+            "entities_created": result.get("entities_created", 0),
+            "processing_time": result.get("processing_time", 0),
+            "details": result.get("details", {})
+        }
+        
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing JSON: {str(e)}")
+
+@app.post("/upload/conversation-json")
+async def upload_conversation_json(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+    graphiti=Depends(get_graphiti)
+):
+    """
+    Upload conversation JSON file and create Graphiti episodes
+    
+    Specifically designed for conversation data with messages, context_files, tool_calls, etc.
+    """
+    try:
+        # Read and parse JSON file
+        content = await file.read()
+        json_text = content.decode('utf-8')
+        
+        # Process conversation JSON
+        result = await process_conversation_json_to_graphiti(
+            json_text=json_text,
+            project_id=project_id,
+            graphiti=graphiti
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Successfully processed conversation file {file.filename}",
+            "project_id": project_id,
+            "conversations_processed": result.get("conversations_processed", 0),
+            "episodes_created": result.get("episodes_created", 0),
+            "entities_created": result.get("entities_created", 0),
+            "processing_time": result.get("processing_time", 0)
+        }
+        
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing conversation JSON: {str(e)}")
 
 # Cache management endpoints
 @app.get("/cache/stats")

@@ -157,3 +157,69 @@ class ShortTermMemorySearchRequest(BaseModel):
     conversation_id: Optional[str] = None     # Filter by conversation
     role: Optional[str] = None                # Filter by role
     limit: Optional[int] = 10                 # Maximum results to return
+
+# =============================================================================
+# CONVERSATION STORAGE SCHEMA - For detailed conversation tracking
+# =============================================================================
+
+class ContextFile(BaseModel):
+    """Context file information"""
+    file_path: str
+    usefulness: float
+    content_hash: str
+    source: str = "vecdb"
+    symbols: List[str] = []
+
+class ToolCall(BaseModel):
+    """Tool call information"""
+    tool_call_id: str
+    tool_name: str
+    arguments_hash: str
+    status: str = "success"
+    execution_time_ms: int = 200
+
+class CodeChange(BaseModel):
+    """Code change information"""
+    name: str
+    summary: str
+    file_path: str
+    function_name: Optional[str] = None
+    change_type: str
+    change_summary: str
+    severity: str
+    diff_summary: str
+    lines_added: int = 0
+    lines_removed: int = 0
+    language: str = "python"
+    imports: List[str] = []
+    code_before_hash: str
+    code_after_hash: str
+    timestamp: str
+
+class ConversationMessage(BaseModel):
+    """Individual conversation message"""
+    sequence: int
+    role: str  # "user", "assistant", "system"
+    content: str
+    timestamp: str
+    total_tokens: int = 0
+    metadata: Dict[str, Any] = {}
+
+class ModelResponse(BaseModel):
+    """Model response information"""
+    model: str
+    finish_reason: str = "stop"
+
+class ConversationPayload(BaseModel):
+    """Complete conversation payload for storage"""
+    request_id: str
+    project_id: str
+    timestamp: str
+    chat_meta: Dict[str, Any]
+    messages: List[ConversationMessage]
+    context_files: List[ContextFile] = []
+    tool_calls: List[ToolCall] = []
+    checkpoints: List[Dict[str, Any]] = []
+    code_changes: List[CodeChange] = []
+    model_response: ModelResponse
+    group_id: Optional[str] = None

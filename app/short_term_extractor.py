@@ -18,6 +18,7 @@ from openai import OpenAI
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,21 @@ class ShortTermMemoryExtractor:
         except Exception as e:
             logger.error(f"Error calculating similarity: {e}")
             return 0.0
+
+    async def _generate_summary(self, prompt: str) -> str:
+        """Sinh tóm tắt ngắn. Nếu không có API key thì trả về prompt rút gọn."""
+        try:
+            if self.client:
+                resp = self.client.chat.completions.create(
+                    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=60,
+                    temperature=0.2,
+                )
+                return resp.choices[0].message.content.strip()  # type: ignore
+        except Exception:
+            pass
+        return prompt[:120]
 
 
 # Global instance

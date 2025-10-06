@@ -76,6 +76,36 @@ async def import_stm_json_content(json_text: str, use_llm: bool = False) -> Dict
         norm = norm.replace("\\", "/")
         return norm
 
+    async def _make_summary(kind: str, name: str | None, content: str | None) -> str | None:
+        """Create a short human-friendly summary for a node.
+        Prefer LLM when available; otherwise return a heuristic sentence.
+        """
+        try:
+            if extractor is not None:
+                base = content or name or ""
+                if not base:
+                    return None
+                prompt = (
+                    f"Summarize this {kind} in one short sentence for graph node tooltip. "
+                    f"Be concise and neutral. Text: " + base[:2000]
+                )
+                # Reuse embedding client to avoid new dependencies; fall back if not available
+                # We call embedding for name separately below
+                return (await extractor._generate_summary(prompt))  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        # Heuristic fallback
+        if kind == "file" and name:
+            return f"Source code file {name}"
+        if kind == "function" and name:
+            return f"Function {name}"
+        if kind == "concept" and name:
+            return f"Concept mentioned: {name}"
+        if content:
+            text = content.strip().replace("\n", " ")
+            return (text[:180] + "…") if len(text) > 200 else text
+        return None
+
     async with graphiti.driver.session() as session:
         for msg in messages:
             # Accept both STM shape and flat shape
@@ -260,6 +290,34 @@ async def import_stm_json_content(json_text: str, use_llm: bool = False) -> Dict
                         "file_path": file_path,
                     },
                 )
+
+            # Optional: generate and attach summaries for File/Function/Concept nodes
+            if use_llm and extractor is not None:
+                # File summary
+                if file_path:
+                    summary = await _make_summary("file", file_path, content)
+                    if summary:
+                        await session.run(
+                            "MATCH (f:File {path:$path}) SET f.summary=$summary",
+                            {"path": file_path, "summary": summary},
+                        )
+                # Function summary
+                if function_name:
+                    summary = await _make_summary("function", function_name, content)
+                    if summary:
+                        await session.run(
+                            "MATCH (fn:Function {key:$key}) SET fn.summary=$summary",
+                            {"key": function_key, "summary": summary},
+                        )
+                # Concepts summary (keep short)
+                if keywords:
+                    for kw in keywords[:5]:
+                        s = await _make_summary("concept", kw, None)
+                        if s:
+                            await session.run(
+                                "MATCH (k:Concept {slug:$slug}) SET k.summary=$summary",
+                                {"slug": (kw.lower().replace(' ', '-')[:128]), "summary": s},
+                            )
 
             # FOLLOWS within conversation
             if conversation_id:
