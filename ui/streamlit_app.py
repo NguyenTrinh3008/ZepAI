@@ -1250,7 +1250,22 @@ with tabs[0]:
                     files = {"file": (stm_json.name, stm_json.getvalue(), "application/json")}
                     data = {"use_llm": str(use_llm).lower()}
                     import requests
-                    resp = requests.post(f"{base}/graph/import-stm-json", files=files, data=data, timeout=120)
+                    
+                    # Tăng timeout cho file lớn
+                    try:
+                        resp = requests.post(f"{base}/graph/import-stm-json", files=files, data=data, timeout=300)
+                    except requests.exceptions.Timeout:
+                        st.error("⏰ **Upload timeout!** File quá lớn hoặc xử lý lâu. Hãy thử:")
+                        st.info("""
+                        - Chia nhỏ file JSON thành các phần nhỏ hơn
+                        - Tắt LLM enrichment (bỏ tick checkbox)
+                        - Kiểm tra kết nối mạng
+                        """)
+                        st.stop()
+                    except requests.exceptions.ConnectionError:
+                        st.error("🔌 **Connection error!** Không thể kết nối đến server.")
+                        st.info("Hãy kiểm tra xem FastAPI server có đang chạy không.")
+                        st.stop()
                     
                     # Don't raise; surface error body
                     try:

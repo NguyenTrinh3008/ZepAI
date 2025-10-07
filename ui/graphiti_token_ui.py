@@ -569,7 +569,12 @@ def display_entity_statistics():
                                 st.caption(entity['summary'])
                             group_id = entity.get('group_id', 'N/A')
                             created_at = entity.get('created_at', 'N/A')
-                            st.caption(f"Group: {group_id[:20] if group_id != 'N/A' else 'N/A'}... | Created: {created_at[:10] if created_at != 'N/A' else 'N/A'}")
+                            
+                            # Safe string slicing
+                            group_display = group_id[:20] if group_id and group_id != 'N/A' and isinstance(group_id, str) else 'N/A'
+                            created_display = created_at[:10] if created_at and created_at != 'N/A' and isinstance(created_at, str) else 'N/A'
+                            
+                            st.caption(f"Group: {group_display}... | Created: {created_display}")
                             st.markdown("---")
                 else:
                     st.info("No entities found")
