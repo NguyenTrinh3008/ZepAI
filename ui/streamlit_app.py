@@ -1181,10 +1181,30 @@ with tabs[0]:
     # Import STM JSON into Neo4j (always visible)
     st.markdown("---")
     st.markdown("### 🧠 Import Short Term Memory JSON to Neo4j")
+    
+    # Thông tin về conversation separation
+    with st.expander("ℹ️ About Conversation Separation", expanded=False):
+        st.info("""
+        **🔄 Automatic Conversation Separation:**
+        
+        When you upload a JSON file, the system will automatically:
+        - **Read `conversation_id`** from each message
+        - **Split data** into separate conversations  
+        - **Create individual graphs** for each conversation
+        - **Upload in parallel** for better performance
+        
+        **📊 Benefits:**
+        - Each conversation gets its own graph structure
+        - Easy querying: `MATCH (e:Episodic {group_id: "chat_001"})`
+        - Better organization and management
+        - Improved performance for large files
+        """)
+    
     stm_json = st.file_uploader(
         "Choose a short_term.json to import",
         type=["json"],
-        key="stm_json_uploader"
+        key="stm_json_uploader",
+        help="JSON file will be automatically split by conversation_id"
     )
     use_llm = st.checkbox("Use LLM to enrich graph (Concepts, RELATES_TO)", value=False, key="stm_use_llm")
     if stm_json is not None:
@@ -1196,26 +1216,67 @@ with tabs[0]:
             st.code(preview)
         if st.button("📤 Import to Neo4j", key="import_stm_json_btn"):
             try:
-                base = get_api_base_url()
-                files = {"file": (stm_json.name, stm_json.getvalue(), "application/json")}
-                data = {"use_llm": str(use_llm).lower()}
-                import requests
-                resp = requests.post(f"{base}/graph/import-stm-json", files=files, data=data, timeout=120)
-                # Don't raise; surface error body
+                # Phân tích JSON để hiển thị thông tin conversation separation
+                import json
+                json_content = stm_json.getvalue().decode("utf-8")
                 try:
-                    data = resp.json()
-                except Exception:
-                    data = {"status": "error", "detail": resp.text}
-                if resp.status_code != 200:
-                    st.error(f"Import failed ({resp.status_code}): {data.get('detail', data)}")
-                    st.stop()
-                if data.get("status") == "success":
-                    summary = data.get("summary", {})
-                    st.success(
-                        f"Imported: {summary.get('created_messages', 0)} messages into Neo4j"
-                    )
-                else:
-                    st.error(f"Failed to import: {data}")
+                    json_data = json.loads(json_content)
+                    conversations = set()
+                    
+                    if isinstance(json_data, list):
+                        for item in json_data:
+                            if isinstance(item, dict):
+                                conv_id = item.get("conversation_id") or item.get("group_id") or "default_conversation"
+                                conversations.add(conv_id)
+                    elif isinstance(json_data, dict):
+                        conv_id = json_data.get("conversation_id") or json_data.get("group_id") or "default_conversation"
+                        conversations.add(conv_id)
+                    
+                    if len(conversations) > 1:
+                        st.info(f"🔍 **Found {len(conversations)} conversations:** {', '.join(sorted(conversations))}")
+                        st.info("📊 **Data will be split by conversation_id and uploaded separately**")
+                    elif len(conversations) == 1:
+                        conv_id = list(conversations)[0]
+                        st.info(f"🔍 **Single conversation detected:** {conv_id}")
+                    else:
+                        st.warning("⚠️ **No conversation_id found, will use default_conversation**")
+                        
+                except json.JSONDecodeError:
+                    st.warning("⚠️ **Could not parse JSON for conversation analysis**")
+                
+                # Upload với progress indicator
+                with st.spinner("🔄 Processing and uploading conversations..."):
+                    base = get_api_base_url()
+                    files = {"file": (stm_json.name, stm_json.getvalue(), "application/json")}
+                    data = {"use_llm": str(use_llm).lower()}
+                    import requests
+                    resp = requests.post(f"{base}/graph/import-stm-json", files=files, data=data, timeout=120)
+                    
+                    # Don't raise; surface error body
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        data = {"status": "error", "detail": resp.text}
+                    
+                    if resp.status_code != 200:
+                        st.error(f"Import failed ({resp.status_code}): {data.get('detail', data)}")
+                        st.stop()
+                    
+                    if data.get("status") == "success":
+                        summary = data.get("summary", {})
+                        st.success(
+                            f"✅ **Import completed successfully!**\n\n"
+                            f"📊 **Summary:**\n"
+                            f"- Messages imported: {summary.get('created_messages', 0)}\n"
+                            f"- Conversations processed: {len(conversations)}\n"
+                            f"- Processing time: {summary.get('processing_time', 0):.2f}s"
+                        )
+                        
+                        # Hiển thị thông tin chi tiết nếu có
+                        if len(conversations) > 1:
+                            st.info(f"🎯 **Each conversation now has its own graph structure in Neo4j**")
+                    else:
+                        st.error(f"Failed to import: {data}")
             except Exception as e:
                 st.error(f"Error importing STM JSON: {e}")
 

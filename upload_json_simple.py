@@ -38,7 +38,8 @@ async def upload_json_file(file_path: str, project_id: str):
                     print(f"ERROR: Invalid JSON format: {e}")
                     return False
             
-            # Phân tích và tách code files
+            # Phân tích và tách theo conversation_id và code files
+            conversations = {}  # {conversation_id: {code_files: [], regular_data: []}}
             code_files = []
             regular_data = data
             
@@ -62,83 +63,125 @@ async def upload_json_file(file_path: str, project_id: str):
                         regular_items.append(item)
                 regular_data = regular_items if regular_items else None
             
-            # Upload code files nếu có
-            code_files_uploaded = 0
-            if code_files:
-                print(f"Found {len(code_files)} code file(s), uploading to code graph...")
-                try:
-                    # Cập nhật group_id = conversation_id cho tất cả code files
-                    for cf in code_files:
-                        if "conversation_id" in cf and "group_id" not in cf:
-                            cf["group_id"] = cf["conversation_id"]
-                        elif "group_id" not in cf:
-                            cf["group_id"] = project_id  # fallback
-                    
-                    code_payload = {"code_files": code_files} if len(code_files) > 1 else code_files[0]
-                    code_response = await client.post(
-                        f"{BASE_URL}/graph/import-code-json",
-                        json=code_payload
-                    )
-                    if code_response.status_code == 200:
-                        code_result = code_response.json()
-                        code_files_uploaded = code_result.get("files", 0)
-                        print(f"✓ Code files uploaded: {code_result.get('files', 0)} files, {code_result.get('symbols', 0)} symbols")
-                    else:
-                        print(f"⚠️ Code files upload failed: {code_response.status_code}")
-                        try:
-                            print(f"   Error: {code_response.json()}")
-                        except:
-                            print(f"   Error: {code_response.text}")
-                except Exception as e:
-                    print(f"⚠️ Error uploading code files: {e}")
+            # Phân chia theo conversation_id
+            if isinstance(regular_data, list):
+                for item in regular_data:
+                    if isinstance(item, dict):
+                        conv_id = item.get("conversation_id") or item.get("group_id") or "default_conversation"
+                        if conv_id not in conversations:
+                            conversations[conv_id] = {"code_files": [], "regular_data": []}
+                        conversations[conv_id]["regular_data"].append(item)
+            elif isinstance(regular_data, dict):
+                conv_id = regular_data.get("conversation_id") or regular_data.get("group_id") or "default_conversation"
+                if conv_id not in conversations:
+                    conversations[conv_id] = {"code_files": [], "regular_data": []}
+                conversations[conv_id]["regular_data"].append(regular_data)
             
-            # Upload regular data nếu có
-            regular_uploaded = False
-            if regular_data is not None:
-                print("Uploading regular data to episodes...")
-                with open(file_path, 'rb') as f:
-                    files = {"file": (os.path.basename(file_path), f, "application/json")}
-                    data = {
-                        "project_id": project_id,
-                        "use_llm": "false"  # Tat LLM de xu ly nhanh hon
-                    }
-                    
-                    print("Sending request to API...")
-                    response = await client.post(
-                        f"{BASE_URL}/upload/json-to-graph",
-                        files=files,
-                        data=data
-                    )
-                    
-                    print(f"Response status: {response.status_code}")
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        print("SUCCESS!")
-                        print(f"   Project ID: {result.get('project_id', 'N/A')}")
-                        print(f"   Episodes created: {result.get('episodes_created', 0)}")
-                        print(f"   Processing time: {result.get('processing_time', 0):.2f}s")
-                        
-                        details = result.get('details', {})
-                        if details:
-                            print(f"   Details:")
-                            for key, value in details.items():
-                                print(f"     {key}: {value}")
-                        
-                        regular_uploaded = True
-                    else:
-                        print(f"ERROR: {response.status_code}")
-                        try:
-                            error_data = response.json()
-                            print(f"   Error details: {error_data}")
-                        except:
-                            print(f"   Error text: {response.text}")
-            else:
-                print("No regular data to upload (only code files found)")
-                regular_uploaded = True  # Consider success if only code files
+            # Phân chia code files theo conversation_id
+            for cf in code_files:
+                conv_id = cf.get("conversation_id") or cf.get("group_id") or "default_conversation"
+                if conv_id not in conversations:
+                    conversations[conv_id] = {"code_files": [], "regular_data": []}
+                conversations[conv_id]["code_files"].append(cf)
             
-            # Return success if either upload succeeded
-            return code_files_uploaded > 0 or regular_uploaded
+            # Upload từng conversation riêng biệt
+            total_code_files = 0
+            total_episodes = 0
+            successful_conversations = 0
+            
+            print(f"Found {len(conversations)} conversation(s) to process:")
+            for conv_id, conv_data in conversations.items():
+                print(f"  - {conv_id}: {len(conv_data['regular_data'])} messages, {len(conv_data['code_files'])} code files")
+            
+            print("\n" + "="*60)
+            
+            for conv_id, conv_data in conversations.items():
+                print(f"\n🔄 Processing conversation: {conv_id}")
+                print("-" * 40)
+                
+                conv_success = True
+                
+                # Upload code files cho conversation này
+                if conv_data["code_files"]:
+                    print(f"  📁 Uploading {len(conv_data['code_files'])} code file(s)...")
+                    try:
+                        # Cập nhật group_id = conversation_id cho code files
+                        for cf in conv_data["code_files"]:
+                            cf["group_id"] = conv_id
+                        
+                        code_payload = {"code_files": conv_data["code_files"]} if len(conv_data["code_files"]) > 1 else conv_data["code_files"][0]
+                        code_response = await client.post(
+                            f"{BASE_URL}/graph/import-code-json",
+                            json=code_payload
+                        )
+                        if code_response.status_code == 200:
+                            code_result = code_response.json()
+                            files_uploaded = code_result.get("files", 0)
+                            symbols_uploaded = code_result.get("symbols", 0)
+                            total_code_files += files_uploaded
+                            print(f"    ✓ Code files: {files_uploaded} files, {symbols_uploaded} symbols")
+                        else:
+                            print(f"    ⚠️ Code files failed: {code_response.status_code}")
+                            conv_success = False
+                    except Exception as e:
+                        print(f"    ❌ Code files error: {e}")
+                        conv_success = False
+                
+                # Upload regular data cho conversation này
+                if conv_data["regular_data"]:
+                    print(f"  💬 Uploading {len(conv_data['regular_data'])} message(s)...")
+                    try:
+                        # Tạo temporary JSON file cho conversation này
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as temp_file:
+                            json.dump(conv_data["regular_data"], temp_file, ensure_ascii=False, indent=2)
+                            temp_file_path = temp_file.name
+                        
+                        # Upload với conversation_id làm project_id
+                        with open(temp_file_path, 'rb') as f:
+                            files = {"file": (f"conversation_{conv_id}.json", f, "application/json")}
+                            data = {
+                                "project_id": conv_id,  # Sử dụng conversation_id làm project_id
+                                "use_llm": "false"
+                            }
+                            
+                            response = await client.post(
+                                f"{BASE_URL}/upload/json-to-graph",
+                                files=files,
+                                data=data
+                            )
+                            
+                            if response.status_code == 200:
+                                result = response.json()
+                                episodes_created = result.get('episodes_created', 0)
+                                total_episodes += episodes_created
+                                print(f"    ✓ Episodes: {episodes_created} created")
+                            else:
+                                print(f"    ⚠️ Episodes failed: {response.status_code}")
+                                conv_success = False
+                        
+                        # Cleanup temp file
+                        os.unlink(temp_file_path)
+                        
+                    except Exception as e:
+                        print(f"    ❌ Episodes error: {e}")
+                        conv_success = False
+                
+                if conv_success:
+                    successful_conversations += 1
+                    print(f"  ✅ Conversation {conv_id} processed successfully")
+                else:
+                    print(f"  ❌ Conversation {conv_id} had errors")
+            
+            # Tóm tắt kết quả
+            print("\n" + "="*60)
+            print("📊 UPLOAD SUMMARY:")
+            print(f"  Conversations processed: {successful_conversations}/{len(conversations)}")
+            print(f"  Total code files: {total_code_files}")
+            print(f"  Total episodes: {total_episodes}")
+            print("="*60)
+            
+            return successful_conversations > 0
                     
     except httpx.TimeoutException:
         print("ERROR: Request timeout - file qua lon hoac xu ly lau")
