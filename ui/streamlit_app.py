@@ -19,6 +19,9 @@ from token_tracker import get_tracker, display_token_metrics, format_token_badge
 # Import Graphiti token tracker UI
 from graphiti_token_ui import render_graphiti_token_tab, display_graphiti_compact_metrics, get_graphiti_tracker
 
+# Import diff viewer
+from diff_viewer import render_code_changes_from_metadata, render_simple_diff, render_diff_viewer
+
 # Import short term memory integration
 from app.short_term_integration import get_integration, save_chat_message
 
@@ -259,7 +262,7 @@ st.info(f"API base: {api_base}")
 tracker = get_tracker()
 graphiti_tracker = get_graphiti_tracker()
 
-tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Token Usage", "Graphiti Tokens", "Debug"])
+tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Token Usage", "Graphiti Tokens", "Debug", "📝 Code Diff"])
 
 # ---------------------------- Chat Tab ----------------------------
 with tabs[0]:
@@ -776,6 +779,20 @@ with tabs[0]:
                                     
                                     st.caption(f"📝 Changes: {changes.get('file_name', 'unknown')} - {changes.get('file_action', 'unknown')} lines {changes.get('line_range', 'N/A')}")
                                     st.caption(f"📊 Diff: Lines {diff_info.get('line_start', 'N/A')}-{diff_info.get('line_end', 'N/A')}, {diff_info.get('total_chunks', 0)} chunks")
+                                    
+                                    # Show diff viewer
+                                    if changes.get('code_changes'):
+                                        with st.expander("🔍 **View Code Changes (Diff)**", expanded=False):
+                                            try:
+                                                render_code_changes_from_metadata(changes)
+                                            except Exception as e:
+                                                st.error(f"Error rendering diff: {e}")
+                                                # Fallback to simple view
+                                                code_changes = changes.get('code_changes', {})
+                                                lines_added = code_changes.get('lines_added', '')
+                                                lines_removed = code_changes.get('lines_removed', '')
+                                                if lines_added or lines_removed:
+                                                    render_simple_diff(lines_added, lines_removed, changes.get('file_name', 'file'))
                                 else:
                                     st.caption("🔧 Code changes saved to short term memory")
                                 
@@ -2283,5 +2300,109 @@ with tabs[6]:
         "project_id": st.session_state.get("project_id", "default_project"),
         "enable_short_term_memory": st.session_state.get("enable_short_term_memory", True)
     })
+
+# ---------------------------- Code Diff Tab ----------------------------
+with tabs[7]:  # Code Diff tab
+    st.subheader("📝 Code Changes Diff Viewer")
+    st.markdown("View and analyze code changes from memory episodes")
+    
+    # Search for code changes
+    st.markdown("### 🔍 Search Code Changes")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        search_group_id = st.text_input(
+            "Group ID (conversation_id)",
+            value=st.session_state.get("group_id", ""),
+            help="Search for code changes in specific conversation",
+            key="diff_search_group_id"
+        )
+    
+    with col2:
+        search_file_name = st.text_input(
+            "File Name Filter",
+            placeholder="e.g., main.py, utils.py",
+            help="Filter by specific file name",
+            key="diff_search_file_name"
+        )
+    
+    if st.button("🔍 Search Code Changes", key="search_code_changes"):
+        if search_group_id:
+            try:
+                base = get_api_base_url()
+                
+                # Search for episodes with code changes
+                params = {
+                    "group_id": search_group_id,
+                    "limit": 50
+                }
+                
+                if search_file_name:
+                    params["file_name"] = search_file_name
+                
+                resp = requests.get(f"{base}/debug/episodes/{search_group_id}", params=params, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                
+                episodes = data.get("episodes", [])
+                code_episodes = []
+                
+                for episode in episodes:
+                    if episode.get("code_changes"):
+                        code_episodes.append(episode)
+                
+                if code_episodes:
+                    st.success(f"Found {len(code_episodes)} episodes with code changes")
+                    
+                    # Display episodes
+                    for i, episode in enumerate(code_episodes):
+                        with st.expander(f"📝 Episode {i+1}: {episode.get('file_name', 'Unknown')} - {episode.get('change_type', 'modified')}", expanded=False):
+                            try:
+                                render_code_changes_from_metadata(episode)
+                            except Exception as e:
+                                st.error(f"Error rendering diff for episode {i+1}: {e}")
+                                # Show raw data for debugging
+                                st.json(episode.get("code_changes", {}))
+                else:
+                    st.info("No episodes with code changes found")
+                    
+            except Exception as e:
+                st.error(f"Error searching code changes: {e}")
+        else:
+            st.warning("Please enter a group_id to search")
+    
+    # Manual diff input
+    st.markdown("---")
+    st.markdown("### 📝 Manual Diff Input")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**File Before:**")
+        file_before = st.text_area(
+            "Original file content",
+            height=200,
+            placeholder="Paste original file content here...",
+            key="manual_file_before"
+        )
+    
+    with col2:
+        st.markdown("**File After:**")
+        file_after = st.text_area(
+            "Modified file content", 
+            height=200,
+            placeholder="Paste modified file content here...",
+            key="manual_file_after"
+        )
+    
+    if st.button("🔍 Generate Diff", key="generate_manual_diff"):
+        if file_before or file_after:
+            try:
+                render_diff_viewer(file_before, file_after, "manual_file.py")
+            except Exception as e:
+                st.error(f"Error generating diff: {e}")
+        else:
+            st.warning("Please enter file content to compare")
 
 
