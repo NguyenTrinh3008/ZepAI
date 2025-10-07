@@ -373,70 +373,127 @@ class FileUploadHandler:
         """
         
         # Normalize line endings
-        original_lines = original_content.replace('\r\n', '\n').splitlines(keepends=True)
-        modified_lines = modified_content.replace('\r\n', '\n').splitlines(keepends=True)
+        original_lines = original_content.replace('\r\n', '\n').splitlines()
+        modified_lines = modified_content.replace('\r\n', '\n').splitlines()
         
-        # Tạo unified diff
-        diff = difflib.unified_diff(
-            original_lines,
-            modified_lines,
-            fromfile=f"a/{file_name}",
-            tofile=f"b/{file_name}",
-            lineterm=''
-        )
+        # Sử dụng SequenceMatcher để detect changes chính xác
+        matcher = difflib.SequenceMatcher(None, original_lines, modified_lines)
         
+        added_lines = []
+        removed_lines = []
+        line_changes = []
         chunks = []
+        
+        orig_line_num = 0
+        mod_line_num = 0
         current_chunk = None
-        line_num_original = 0
-        line_num_modified = 0
         
-        # Bỏ qua 2 dòng header của unified diff
-        diff_lines = list(diff)[2:] 
-        
-        print(f"DEBUG: Diff lines count: {len(diff_lines)}")
-        print(f"DEBUG: First few diff lines: {[line.encode('ascii', 'replace').decode('ascii') for line in diff_lines[:5]]}")
-
-        for line in diff_lines:
-            if line.startswith('@@'):
-                # Bắt đầu một chunk mới
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "delete":
+                # Lines removed
+                for i in range(i1, i2):
+                    orig_line_num += 1
+                    removed_lines.append(original_lines[i])
+                    line_changes.append({
+                        "type": "removed",
+                        "line_number": orig_line_num,
+                        "content": original_lines[i]
+                    })
+                    
+                    # Tạo chunk mới nếu cần
+                    if not current_chunk:
+                        current_chunk = {
+                            "file_name": file_name,
+                            "file_action": change_type,
+                            "line1": orig_line_num,
+                            "line2": orig_line_num,
+                            "lines_remove": "",
+                            "lines_add": "",
+                            "file_name_rename": None,
+                            "application_details": ""
+                        }
+                    
+                    current_chunk["lines_remove"] += original_lines[i] + "\n"
+                    current_chunk["line2"] = orig_line_num
+            
+            elif tag == "insert":
+                # Lines added
+                for j in range(j1, j2):
+                    mod_line_num += 1
+                    added_lines.append(modified_lines[j])
+                    line_changes.append({
+                        "type": "added",
+                        "line_number": mod_line_num,
+                        "content": modified_lines[j]
+                    })
+                    
+                    # Tạo chunk mới nếu cần
+                    if not current_chunk:
+                        current_chunk = {
+                            "file_name": file_name,
+                            "file_action": change_type,
+                            "line1": mod_line_num,
+                            "line2": mod_line_num,
+                            "lines_remove": "",
+                            "lines_add": "",
+                            "file_name_rename": None,
+                            "application_details": ""
+                        }
+                    
+                    current_chunk["lines_add"] += modified_lines[j] + "\n"
+                    current_chunk["line2"] = mod_line_num
+            
+            elif tag == "replace":
+                # Lines replaced
+                for i in range(i1, i2):
+                    orig_line_num += 1
+                    removed_lines.append(original_lines[i])
+                    line_changes.append({
+                        "type": "removed",
+                        "line_number": orig_line_num,
+                        "content": original_lines[i]
+                    })
+                    
+                    if not current_chunk:
+                        current_chunk = {
+                            "file_name": file_name,
+                            "file_action": change_type,
+                            "line1": orig_line_num,
+                            "line2": orig_line_num,
+                            "lines_remove": "",
+                            "lines_add": "",
+                            "file_name_rename": None,
+                            "application_details": ""
+                        }
+                    
+                    current_chunk["lines_remove"] += original_lines[i] + "\n"
+                    current_chunk["line2"] = orig_line_num
+                
+                for j in range(j1, j2):
+                    mod_line_num += 1
+                    added_lines.append(modified_lines[j])
+                    line_changes.append({
+                        "type": "added",
+                        "line_number": mod_line_num,
+                        "content": modified_lines[j]
+                    })
+                    
+                    current_chunk["lines_add"] += modified_lines[j] + "\n"
+                    current_chunk["line2"] = mod_line_num
+            
+            elif tag == "equal":
+                # Context lines - kết thúc chunk hiện tại
                 if current_chunk:
                     chunks.append(current_chunk)
+                    current_chunk = None
                 
-                # Parse header: @@ -start_orig,len_orig +start_mod,len_mod @@
-                header_match = re.match(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
-                if header_match:
-                    line_num_original = int(header_match.group(1))
-                    line_num_modified = int(header_match.group(3))
-                    
-                    current_chunk = {
-                        "file_name": file_name,
-                        "file_action": change_type,
-                        "line1": line_num_original,
-                        "line2": line_num_original,
-                        "lines_remove": "",
-                        "lines_add": "",
-                        "file_name_rename": None,
-                        "application_details": ""
-                    }
-                    print(f"DEBUG: New chunk starting at line {line_num_original}")
-                continue
-
-            if current_chunk:
-                if line.startswith('-'):
-                    current_chunk["lines_remove"] += line[1:]  # Remove '-' prefix
-                    current_chunk["line2"] = line_num_original
-                    line_num_original += 1
-                elif line.startswith('+'):
-                    current_chunk["lines_add"] += line[1:]  # Remove '+' prefix
-                    line_num_modified += 1
-                elif line.startswith(' '):
-                    # Context line, advance both line numbers
-                    line_num_original += 1
-                    line_num_modified += 1
+                orig_line_num += (i2 - i1)
+                mod_line_num += (j2 - j1)
         
+        # Thêm chunk cuối cùng
         if current_chunk:
             chunks.append(current_chunk)
-
+        
         # Determine overall line_start and line_end for the entire change
         overall_line_start = None
         overall_line_end = None
@@ -444,7 +501,7 @@ class FileUploadHandler:
             # Find the earliest start line and latest end line across all chunks
             overall_line_start = min(c["line1"] for c in chunks)
             overall_line_end = max(c["line2"] for c in chunks)
-            print(f"DEBUG: Found {len(chunks)} chunks, line range: {overall_line_start}-{overall_line_end}")
+            print(f"DEBUG: Advanced diff - Added: {len(added_lines)}, Removed: {len(removed_lines)}, Chunks: {len(chunks)}")
 
         return {
             "file_before": original_content,
@@ -452,7 +509,13 @@ class FileUploadHandler:
             "chunks": chunks,
             "line_start": overall_line_start,
             "line_end": overall_line_end,
-            "function_name": self._extract_function_name(modified_content)
+            "function_name": self._extract_function_name(modified_content),
+            "lines_added": len(added_lines),
+            "lines_removed": len(removed_lines),
+            "lines_added_content": "\n".join(added_lines),
+            "lines_removed_content": "\n".join(removed_lines),
+            "line_changes": line_changes,
+            "net_change": len(added_lines) - len(removed_lines)
         }
     
     async def process_ai_code_response(self, 

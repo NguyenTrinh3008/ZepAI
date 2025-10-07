@@ -22,6 +22,12 @@ from graphiti_token_ui import render_graphiti_token_tab, display_graphiti_compac
 # Import diff viewer
 from diff_viewer import render_code_changes_from_metadata, render_simple_diff, render_diff_viewer
 
+# Import code editor
+from code_editor import render_file_editor_tab, detect_code_changes_advanced
+
+# Import chat code editor
+from chat_code_editor import render_chat_code_editor, detect_chat_code_changes
+
 # Import short term memory integration
 from app.short_term_integration import get_integration, save_chat_message
 
@@ -262,7 +268,7 @@ st.info(f"API base: {api_base}")
 tracker = get_tracker()
 graphiti_tracker = get_graphiti_tracker()
 
-tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Token Usage", "Graphiti Tokens", "Debug", "📝 Code Diff"])
+tabs = st.tabs(["Chat", "Ingest", "Search", "Cache", "Token Usage", "Graphiti Tokens", "Debug", "📝 Code Diff", "✏️ Code Editor"])
 
 # ---------------------------- Chat Tab ----------------------------
 with tabs[0]:
@@ -799,6 +805,67 @@ with tabs[0]:
                                 if diff_info.get('function_name'):
                                     st.caption(f"🔧 Function: {diff_info['function_name']}")
                                 
+                                # Show AI response with code editor
+                                st.markdown("### 🤖 **AI Response with Code Editor**")
+                                
+                                # Extract modified content from AI response
+                                modified_content = uploaded_file["content"]  # Default to original
+                                
+                                # Try to extract code from AI response
+                                if "```" in assistant_reply:
+                                    # Extract code blocks from AI response
+                                    import re
+                                    code_blocks = re.findall(r'```(?:python|py|javascript|js|typescript|ts|html|css|json)?\n(.*?)\n```', assistant_reply, re.DOTALL)
+                                    if code_blocks:
+                                        modified_content = code_blocks[-1]  # Use the last code block
+                                
+                                # Render code editor for AI response
+                                ai_edited_content, ai_action = render_chat_code_editor(
+                                    file_content=modified_content,
+                                    file_name=uploaded_file["name"],
+                                    language='python' if uploaded_file["name"].endswith('.py') else 'text',
+                                    key=f"ai_editor_{uploaded_file['name']}"
+                                )
+                                
+                                # Handle AI editor actions
+                                if ai_action == "saved":
+                                    st.session_state["uploaded_file"]["content"] = ai_edited_content
+                                    st.success("✅ AI response applied to file!")
+                                elif ai_action == "apply":
+                                    st.session_state["uploaded_file"]["content"] = ai_edited_content
+                                    st.success("✅ AI changes applied! You can continue editing.")
+                                    
+                                    # Auto-save AI changes to memory
+                                    try:
+                                        base = get_api_base_url()
+                                        file_path = uploaded_file.get("file_path", uploaded_file["name"])
+                                        
+                                        # Detect changes from AI response
+                                        ai_changes = detect_chat_code_changes(uploaded_file["content"], ai_edited_content, uploaded_file["name"])
+                                        
+                                        if not ai_changes.get("error"):
+                                            # Save AI changes to memory
+                                            files = {'file': (uploaded_file["name"], ai_edited_content.encode('utf-8'), 'text/plain')}
+                                            data = {
+                                                'project_id': project_id,
+                                                'conversation_id': conversation_id,
+                                                'role': 'assistant',
+                                                'content': f'AI updated file: {file_path} - {ai_changes["diff_summary"]}',
+                                                'change_type': ai_changes["change_type"],
+                                                'description': f'AI file update: {ai_changes["diff_summary"]}',
+                                                'file_path': file_path
+                                            }
+                                            
+                                            response = requests.post(f"{base}/upload/file", files=files, data=data, timeout=30)
+                                            response.raise_for_status()
+                                            result = response.json()
+                                            
+                                            if result.get("status") == "success":
+                                                st.caption(f"🤖 AI changes saved to memory: {result['result']['message_id'][:8]}...")
+                                            
+                                    except Exception as e:
+                                        st.warning(f"Could not auto-save AI changes: {e}")
+                                
                             elif result.get("status") == "no_code":
                                 st.caption("ℹ️ No code blocks detected in AI response")
                             else:
@@ -1052,8 +1119,6 @@ with tabs[0]:
     if uploaded_file is not None:
         try:
             file_content = uploaded_file.read().decode('utf-8')
-            st.markdown("**File Content Preview:**")
-            st.code(file_content, language='python' if uploaded_file.name.endswith('.py') else 'text')
             
             # Add file info to session state
             st.session_state["uploaded_file"] = {
@@ -1062,6 +1127,75 @@ with tabs[0]:
                 "size": len(file_content),
                 "file_path": uploaded_file.name  # Default file path
             }
+            
+            # Determine language
+            language = 'python' if uploaded_file.name.endswith('.py') else 'text'
+            if uploaded_file.name.endswith('.js'):
+                language = 'javascript'
+            elif uploaded_file.name.endswith('.ts'):
+                language = 'typescript'
+            elif uploaded_file.name.endswith('.html'):
+                language = 'html'
+            elif uploaded_file.name.endswith('.css'):
+                language = 'css'
+            elif uploaded_file.name.endswith('.json'):
+                language = 'json'
+            
+            # Render chat code editor
+            edited_content, action = render_chat_code_editor(
+                file_content=file_content,
+                file_name=uploaded_file.name,
+                language=language,
+                key=f"chat_editor_{uploaded_file.name}"
+            )
+            
+            # Handle editor actions
+            if action == "saved":
+                st.session_state["uploaded_file"]["content"] = edited_content
+                st.success("✅ File content updated!")
+            elif action == "apply":
+                st.session_state["uploaded_file"]["content"] = edited_content
+                st.success("✅ Changes applied! You can continue chatting.")
+                
+                # Auto-save changes to memory
+                try:
+                    base = get_api_base_url()
+                    file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                    
+                    # Detect changes
+                    changes = detect_chat_code_changes(file_content, edited_content, uploaded_file.name)
+                    
+                    if changes.get("error"):
+                        st.warning(f"Could not detect changes: {changes['error']}")
+                    else:
+                        # Save changes to memory
+                        files = {'file': (uploaded_file.name, edited_content.encode('utf-8'), 'text/plain')}
+                        data = {
+                            'project_id': project_id,
+                            'conversation_id': conversation_id,
+                            'role': 'user',
+                            'content': f'Updated file: {file_path} - {changes["diff_summary"]}',
+                            'change_type': changes["change_type"],
+                            'description': f'File updated via code editor: {changes["diff_summary"]}',
+                            'file_path': file_path
+                        }
+                        
+                        response = requests.post(f"{base}/upload/file", files=files, data=data, timeout=30)
+                        response.raise_for_status()
+                        result = response.json()
+                        
+                        if result.get("status") == "success":
+                            st.caption(f"💾 Changes saved to memory: {result['result']['message_id'][:8]}...")
+                        else:
+                            st.warning(f"Could not save changes to memory: {result.get('message', 'Unknown error')}")
+                            
+                except Exception as e:
+                    st.warning(f"Could not auto-save changes: {e}")
+            
+            # Show original file info
+            with st.expander("📄 **Original File Info**", expanded=False):
+                st.code(file_content, language=language)
+                st.caption(f"📊 **File stats:** {len(file_content.splitlines())} lines, {len(file_content)} characters")
             
             # File path input
             st.markdown("**📁 File Path (for storage in memory):**")
@@ -2404,5 +2538,9 @@ with tabs[7]:  # Code Diff tab
                 st.error(f"Error generating diff: {e}")
         else:
             st.warning("Please enter file content to compare")
+
+# ---------------------------- Code Editor Tab ----------------------------
+with tabs[8]:  # Code Editor tab
+    render_file_editor_tab()
 
 
