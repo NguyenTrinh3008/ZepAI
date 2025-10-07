@@ -563,11 +563,14 @@ def display_entity_statistics():
                 
                 if top_entities:
                     for entity in top_entities[:10]:
-                        st.markdown(f"**{entity['name']}**")
-                        if entity.get('summary'):
-                            st.caption(entity['summary'])
-                        st.caption(f"Group: {entity['group_id'][:20]}... | Created: {entity.get('created_at', 'N/A')[:10]}")
-                        st.markdown("---")
+                        if entity and isinstance(entity, dict):
+                            st.markdown(f"**{entity.get('name', 'Unknown')}**")
+                            if entity.get('summary'):
+                                st.caption(entity['summary'])
+                            group_id = entity.get('group_id', 'N/A')
+                            created_at = entity.get('created_at', 'N/A')
+                            st.caption(f"Group: {group_id[:20] if group_id != 'N/A' else 'N/A'}... | Created: {created_at[:10] if created_at != 'N/A' else 'N/A'}")
+                            st.markdown("---")
                 else:
                     st.info("No entities found")
         else:

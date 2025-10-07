@@ -480,14 +480,16 @@ with tabs[0]:
                         conversation_id = st.session_state.group_id
                         
                         # Upload file to API
+                        file_path = uploaded_file.get("file_path", uploaded_file["name"])
                         files = {'file': (uploaded_file["name"], uploaded_file["content"], 'text/plain')}
                         data = {
                             'project_id': project_id,
                             'conversation_id': conversation_id,
                             'role': 'user',
-                            'content': f'Uploaded file: {uploaded_file["name"]}',
+                            'content': f'Uploaded file: {file_path}',
                             'change_type': 'modified',
-                            'description': 'File uploaded for AI analysis'
+                            'description': 'File uploaded for AI analysis',
+                            'file_path': file_path
                         }
                         
                         response = requests.post(f"{base}/upload/file", files=files, data=data, timeout=30)
@@ -745,12 +747,14 @@ with tabs[0]:
                             handler = get_file_upload_handler()
                             
                             import asyncio
+                            file_path = uploaded_file.get("file_path", uploaded_file["name"])
                             result = asyncio.run(handler.process_ai_code_response(
                                 original_file_content=uploaded_file["content"],
                                 ai_response=assistant_reply,
                                 file_name=uploaded_file["name"],
                                 project_id=project_id,
                                 conversation_id=conversation_id,
+                                file_path=file_path,
                                 role="assistant"
                             ))
                             
@@ -758,14 +762,22 @@ with tabs[0]:
                             st.caption(f"🔍 Debug: AI code response result = {result.get('status', 'unknown')}")
                             
                             if result.get("status") == "success":
-                                st.caption(f"🔧 Code changes saved to short term memory: {result['result']['results'][0]['message_id'][:8]}...")
+                                # Safe access to result data
+                                result_data = result.get('result', {})
+                                results = result_data.get('results', [])
+                                diff_info = result.get('diff_info', {})  # Move outside if block
                                 
-                                # Show detailed changes summary
-                                changes = result['result']['results'][0]
-                                diff_info = result.get('diff_info', {})
-                                
-                                st.caption(f"📝 Changes: {changes['file_name']} - {changes['file_action']} lines {changes['line_range']}")
-                                st.caption(f"📊 Diff: Lines {diff_info.get('line_start', 'N/A')}-{diff_info.get('line_end', 'N/A')}, {diff_info.get('total_chunks', 0)} chunks")
+                                if results:
+                                    message_id = results[0].get('message_id', 'unknown')
+                                    st.caption(f"🔧 Code changes saved to short term memory: {message_id[:8]}...")
+                                    
+                                    # Show detailed changes summary
+                                    changes = results[0]
+                                    
+                                    st.caption(f"📝 Changes: {changes.get('file_name', 'unknown')} - {changes.get('file_action', 'unknown')} lines {changes.get('line_range', 'N/A')}")
+                                    st.caption(f"📊 Diff: Lines {diff_info.get('line_start', 'N/A')}-{diff_info.get('line_end', 'N/A')}, {diff_info.get('total_chunks', 0)} chunks")
+                                else:
+                                    st.caption("🔧 Code changes saved to short term memory")
                                 
                                 if diff_info.get('function_name'):
                                     st.caption(f"🔧 Function: {diff_info['function_name']}")
@@ -1030,8 +1042,22 @@ with tabs[0]:
             st.session_state["uploaded_file"] = {
                 "name": uploaded_file.name,
                 "content": file_content,
-                "size": len(file_content)
+                "size": len(file_content),
+                "file_path": uploaded_file.name  # Default file path
             }
+            
+            # File path input
+            st.markdown("**📁 File Path (for storage in memory):**")
+            file_path_input = st.text_input(
+                "File Path",
+                value=uploaded_file.name,
+                help="This path will be stored in memory nodes for better organization",
+                key="file_path_input"
+            )
+            
+            # Update session state with custom file path
+            if file_path_input:
+                st.session_state["uploaded_file"]["file_path"] = file_path_input
             
             # Custom description input
             st.markdown("**📝 Describe what you want AI to do with this file:**")
@@ -1047,30 +1073,34 @@ with tabs[0]:
             
             with col1:
                 if st.button("🔍 Analyze File", key="analyze_file_btn"):
-                    # Create analysis message
-                    analysis_msg = f"Please analyze this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    # Create analysis message with file path
+                    file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                    analysis_msg = f"Please analyze this file: {file_path}\n\nFile content:\n```\n{file_content}\n```"
                     st.session_state["_pending_input"] = analysis_msg
                     st.rerun()
             
             with col2:
                 if st.button("🛠️ Fix Issues", key="fix_file_btn"):
-                    # Create fix message
-                    fix_msg = f"Please review and fix any issues in this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    # Create fix message with file path
+                    file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                    fix_msg = f"Please review and fix any issues in this file: {file_path}\n\nFile content:\n```\n{file_content}\n```"
                     st.session_state["_pending_input"] = fix_msg
                     st.rerun()
             
             with col3:
                 if st.button("📝 Improve Code", key="improve_file_btn"):
-                    # Create improve message
-                    improve_msg = f"Please improve this code: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    # Create improve message with file path
+                    file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                    improve_msg = f"Please improve this code: {file_path}\n\nFile content:\n```\n{file_content}\n```"
                     st.session_state["_pending_input"] = improve_msg
                     st.rerun()
             
             with col4:
                 if st.button("🚀 Send with Description", key="send_with_description_btn"):
                     if custom_description.strip():
-                        # Create custom message with description
-                        custom_msg = f"Please work on this file: {uploaded_file.name}\n\nTask: {custom_description}\n\nFile content:\n```\n{file_content}\n```"
+                        # Create custom message with description and file path
+                        file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                        custom_msg = f"Please work on this file: {file_path}\n\nTask: {custom_description}\n\nFile content:\n```\n{file_content}\n```"
                         st.session_state["_pending_input"] = custom_msg
                         st.rerun()
                     else:
@@ -1081,21 +1111,63 @@ with tabs[0]:
             example_cols = st.columns(3)
             with example_cols[0]:
                 if st.button("Add Error Handling", key="example_error_handling"):
-                    example_msg = f"Please add comprehensive error handling to this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                    example_msg = f"Please add comprehensive error handling to this file: {file_path}\n\nFile content:\n```\n{file_content}\n```"
                     st.session_state["_pending_input"] = example_msg
                     st.rerun()
             
             with example_cols[1]:
                 if st.button("Optimize Performance", key="example_optimize"):
-                    example_msg = f"Please optimize the performance of this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                    example_msg = f"Please optimize the performance of this file: {file_path}\n\nFile content:\n```\n{file_content}\n```"
                     st.session_state["_pending_input"] = example_msg
                     st.rerun()
             
             with example_cols[2]:
                 if st.button("Add Documentation", key="example_docs"):
-                    example_msg = f"Please add comprehensive documentation and comments to this file: {uploaded_file.name}\n\nFile content:\n```\n{file_content}\n```"
+                    file_path = st.session_state["uploaded_file"].get("file_path", uploaded_file.name)
+                    example_msg = f"Please add comprehensive documentation and comments to this file: {file_path}\n\nFile content:\n```\n{file_content}\n```"
                     st.session_state["_pending_input"] = example_msg
                     st.rerun()
+            
+            st.markdown("---")
+            st.markdown("### 📚 Index This File to Code Graph (Neo4j)")
+            idx_col1, idx_col2 = st.columns([2, 1])
+            with idx_col1:
+                idx_project_id = st.text_input(
+                    "Project ID (group_id)", 
+                    value=st.session_state.get("project_id", "default_project"),
+                    key="code_index_project_id"
+                )
+                idx_path = st.text_input(
+                    "Logical File Path (optional)", 
+                    value=st.session_state["uploaded_file"].get("file_path", uploaded_file.name),
+                    key="code_index_path",
+                    help="Path to store in Neo4j, defaults to file path above"
+                )
+            with idx_col2:
+                if st.button("📥 Index to Neo4j", key="index_code_btn"):
+                    try:
+                        base = get_api_base_url()
+                        files = {'file': (uploaded_file.name, file_content.encode('utf-8'), 'text/plain')}
+                        data = {
+                            'project_id': idx_project_id,
+                            'file_path': idx_path
+                        }
+                        resp = requests.post(f"{base}/graph/import-code-file", files=files, data=data, timeout=60)
+                        try:
+                            payload = resp.json()
+                        except Exception:
+                            payload = {"status": "error", "detail": resp.text}
+                        if resp.status_code == 200 and payload.get("status") == "success":
+                            st.success(f"Indexed to Neo4j: {payload.get('file_path')} • symbols={payload.get('symbols', 0)}")
+                            with st.expander("Response"):
+                                st.json(payload)
+                        else:
+                            st.error(f"Indexing failed ({resp.status_code})")
+                            st.json(payload)
+                    except Exception as e:
+                        st.error(f"Error indexing file: {e}")
                     
         except Exception as e:
             st.error(f"Error reading file: {e}")

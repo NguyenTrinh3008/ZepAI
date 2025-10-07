@@ -29,44 +29,116 @@ async def upload_json_file(file_path: str, project_id: str):
         async with httpx.AsyncClient(timeout=timeout) as client:
             print("Starting upload...")
             
-            with open(file_path, 'rb') as f:
-                files = {"file": (os.path.basename(file_path), f, "application/json")}
-                data = {
-                    "project_id": project_id,
-                    "use_llm": "false"  # Tat LLM de xu ly nhanh hon
-                }
-                
-                print("Sending request to API...")
-                response = await client.post(
-                    f"{BASE_URL}/upload/json-to-graph",
-                    files=files,
-                    data=data
-                )
-                
-                print(f"Response status: {response.status_code}")
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    print("SUCCESS!")
-                    print(f"   Project ID: {result.get('project_id', 'N/A')}")
-                    print(f"   Episodes created: {result.get('episodes_created', 0)}")
-                    print(f"   Processing time: {result.get('processing_time', 0):.2f}s")
-                    
-                    details = result.get('details', {})
-                    if details:
-                        print(f"   Details:")
-                        for key, value in details.items():
-                            print(f"     {key}: {value}")
-                    
-                    return True
-                else:
-                    print(f"ERROR: {response.status_code}")
-                    try:
-                        error_data = response.json()
-                        print(f"   Error details: {error_data}")
-                    except:
-                        print(f"   Error text: {response.text}")
+            # Đọc file để phân tích trước
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError as e:
+                    print(f"ERROR: Invalid JSON format: {e}")
                     return False
+            
+            # Phân tích và tách code files
+            code_files = []
+            regular_data = data
+            
+            if isinstance(data, dict):
+                if "code_files" in data:
+                    # Format: {"code_files": [...]}
+                    code_files = data.get("code_files", [])
+                    regular_data = {k: v for k, v in data.items() if k != "code_files"}
+                elif data.get("entity_type") in ["context_file", "code_file"]:
+                    # Single code file object
+                    code_files = [data]
+                    regular_data = None
+            elif isinstance(data, list):
+                # List of objects - check each
+                code_files = []
+                regular_items = []
+                for item in data:
+                    if isinstance(item, dict) and item.get("entity_type") in ["context_file", "code_file"]:
+                        code_files.append(item)
+                    else:
+                        regular_items.append(item)
+                regular_data = regular_items if regular_items else None
+            
+            # Upload code files nếu có
+            code_files_uploaded = 0
+            if code_files:
+                print(f"Found {len(code_files)} code file(s), uploading to code graph...")
+                try:
+                    # Cập nhật group_id = conversation_id cho tất cả code files
+                    for cf in code_files:
+                        if "conversation_id" in cf and "group_id" not in cf:
+                            cf["group_id"] = cf["conversation_id"]
+                        elif "group_id" not in cf:
+                            cf["group_id"] = project_id  # fallback
+                    
+                    code_payload = {"code_files": code_files} if len(code_files) > 1 else code_files[0]
+                    code_response = await client.post(
+                        f"{BASE_URL}/graph/import-code-json",
+                        json=code_payload
+                    )
+                    if code_response.status_code == 200:
+                        code_result = code_response.json()
+                        code_files_uploaded = code_result.get("files", 0)
+                        print(f"✓ Code files uploaded: {code_result.get('files', 0)} files, {code_result.get('symbols', 0)} symbols")
+                    else:
+                        print(f"⚠️ Code files upload failed: {code_response.status_code}")
+                        try:
+                            print(f"   Error: {code_response.json()}")
+                        except:
+                            print(f"   Error: {code_response.text}")
+                except Exception as e:
+                    print(f"⚠️ Error uploading code files: {e}")
+            
+            # Upload regular data nếu có
+            regular_uploaded = False
+            if regular_data is not None:
+                print("Uploading regular data to episodes...")
+                with open(file_path, 'rb') as f:
+                    files = {"file": (os.path.basename(file_path), f, "application/json")}
+                    data = {
+                        "project_id": project_id,
+                        "use_llm": "false"  # Tat LLM de xu ly nhanh hon
+                    }
+                    
+                    print("Sending request to API...")
+                    response = await client.post(
+                        f"{BASE_URL}/upload/json-to-graph",
+                        files=files,
+                        data=data
+                    )
+                    
+                    print(f"Response status: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        print("SUCCESS!")
+                        print(f"   Project ID: {result.get('project_id', 'N/A')}")
+                        print(f"   Episodes created: {result.get('episodes_created', 0)}")
+                        print(f"   Processing time: {result.get('processing_time', 0):.2f}s")
+                        
+                        details = result.get('details', {})
+                        if details:
+                            print(f"   Details:")
+                            for key, value in details.items():
+                                print(f"     {key}: {value}")
+                        
+                        regular_uploaded = True
+                    else:
+                        print(f"ERROR: {response.status_code}")
+                        try:
+                            error_data = response.json()
+                            print(f"   Error details: {error_data}")
+                        except:
+                            print(f"   Error text: {response.text}")
+            else:
+                print("No regular data to upload (only code files found)")
+                regular_uploaded = True  # Consider success if only code files
+            
+            # Return success if either upload succeeded
+            return code_files_uploaded > 0 or regular_uploaded
                     
     except httpx.TimeoutException:
         print("ERROR: Request timeout - file qua lon hoac xu ly lau")

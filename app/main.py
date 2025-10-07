@@ -30,6 +30,7 @@ from app.file_upload_handler import get_file_upload_handler
 from app.stm_to_neo4j import import_stm_json_content
 from app.conversation_storage import get_conversation_storage
 from app.json_processor import process_json_to_graphiti, process_conversation_json_to_graphiti
+from app.code_import import ingest_code_file, ingest_code_dir, ingest_code_json
 
 enable_global_openai_tracking()
 app = FastAPI(title="Graphiti Memory Layer")
@@ -1487,7 +1488,8 @@ async def upload_file(
     role: str = Form("assistant"),
     content: str = Form(""),
     change_type: str = Form("modified"),
-    description: str = Form("")
+    description: str = Form(""),
+    file_path: str = Form(None)
 ):
     """
     Upload file code và trích xuất thông tin code changes
@@ -1519,7 +1521,8 @@ async def upload_file(
             role=role,
             content=content,
             change_type=change_type,
-            description=description
+            description=description,
+            file_path=file_path or file.filename
         )
         
         return {
@@ -1630,5 +1633,67 @@ async def import_stm_json(file: UploadFile = File(...), use_llm: bool = Form(Fal
         text = (await file.read()).decode("utf-8")
         summary = await import_stm_json_content(text, use_llm=use_llm)
         return {"status": "success", "summary": summary}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# =============================================================================
+# CODE IMPORT ENDPOINTS - Create CodeFile/CodeSymbol nodes
+# =============================================================================
+
+@app.post("/graph/import-code-file")
+async def import_code_file(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+    file_path: str = Form(None),
+    repo: str = Form(None),
+    graphiti=Depends(get_graphiti),
+):
+    try:
+        content = (await file.read()).decode("utf-8", errors="ignore")
+        logical_path = file_path or file.filename
+        result = await ingest_code_file(
+            graphiti=graphiti,
+            file_path=logical_path,
+            file_content=content,
+            project_id=project_id,
+            repo=repo,
+        )
+        return {"status": "success", **result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/graph/import-code-dir")
+async def import_code_dir(
+    root_dir: str = Form(...),
+    project_id: str = Form(...),
+    repo: str = Form(None),
+    graphiti=Depends(get_graphiti),
+):
+    try:
+        result = await ingest_code_dir(
+            graphiti=graphiti,
+            root_dir=root_dir,
+            project_id=project_id,
+            repo=repo,
+        )
+        return {"status": "success", **result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/graph/import-code-json")
+async def import_code_json(
+    payload: Dict[str, Any],
+    graphiti=Depends(get_graphiti),
+):
+    """Import code-file metadata JSON and create CodeFile/CodeSymbol nodes.
+
+    Accepts either {"code_files": [...]} or a single object.
+    """
+    try:
+        result = await ingest_code_json(graphiti, payload)
+        return {"status": "success", **result}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

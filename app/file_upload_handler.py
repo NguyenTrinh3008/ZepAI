@@ -33,6 +33,7 @@ class FileUploadHandler:
                                  conversation_id: str,
                                  role: str = "assistant",
                                  content: str = "",
+                                 file_path: str = None,
                                  **kwargs) -> Dict[str, Any]:
         """
         Xử lý file upload và trích xuất code changes
@@ -76,12 +77,13 @@ class FileUploadHandler:
             diff_summary = file_analysis.get("diff_summary", "")
             
             # Tạo ShortTermMemoryRequest
+            actual_file_path = file_path or file_name
             request = ShortTermMemoryRequest(
                 role=role,
-                content=content or f"Uploaded and analyzed file: {file_name}",
+                content=content or f"Uploaded and analyzed file: {actual_file_path}",
                 project_id=project_id,
                 conversation_id=conversation_id,
-                file_path=file_name,
+                file_path=actual_file_path,
                 function_name=function_name,
                 line_start=line_start,
                 line_end=line_end,
@@ -117,7 +119,8 @@ class FileUploadHandler:
                                          payload: Dict[str, Any],
                                          project_id: str,
                                          conversation_id: str,
-                                         role: str = "assistant") -> Dict[str, Any]:
+                                         role: str = "assistant",
+                                         file_path: str = None) -> Dict[str, Any]:
         """
         Xử lý payload code changes từ IDE/editor
         
@@ -139,6 +142,8 @@ class FileUploadHandler:
             
             for chunk in chunks:
                 file_name = chunk.get("file_name", "")
+                # Sử dụng file_path nếu có, fallback về file_name
+                actual_file_name = file_path or file_name
                 file_action = chunk.get("file_action", "edit")
                 line1 = chunk.get("line1", 1)
                 line2 = chunk.get("line2", 1)
@@ -148,8 +153,9 @@ class FileUploadHandler:
                 # Tạo code_changes object chi tiết
                 code_changes = {
                     "change_type": file_action,
-                    "description": f"Code changes in {file_name}",
+                    "description": f"Code changes in {actual_file_name}",
                     "file_action": file_action,
+                    "file_name": actual_file_name,
                     "line_range": {
                         "start": line1,
                         "end": line2
@@ -165,15 +171,15 @@ class FileUploadHandler:
                 lines_removed = len(lines_remove.split('\n')) if lines_remove else 0
                 
                 # Tạo diff_summary
-                diff_summary = f"Added {lines_added} lines, removed {lines_removed} lines in {file_name}"
+                diff_summary = f"Added {lines_added} lines, removed {lines_removed} lines in {actual_file_name}"
                 
                 # Tạo ShortTermMemoryRequest
                 request = ShortTermMemoryRequest(
                     role=role,
-                    content=f"Code changes in {file_name}: {file_action}",
+                    content=f"Code changes in {actual_file_name}: {file_action}",
                     project_id=project_id,
                     conversation_id=conversation_id,
-                    file_path=file_name,
+                    file_path=actual_file_name,
                     function_name=self._extract_function_name(lines_add or lines_remove),
                     line_start=line1,
                     line_end=line2,
@@ -455,6 +461,7 @@ class FileUploadHandler:
                                      file_name: str,
                                      project_id: str,
                                      conversation_id: str,
+                                     file_path: str = None,
                                      role: str = "assistant") -> Dict[str, Any]:
         """
         Xử lý response từ AI có chứa code và so sánh với file gốc
@@ -493,7 +500,7 @@ class FileUploadHandler:
             code_changes = self._compare_code_changes(
                 original_file_content,
                 modified_content,
-                file_name,
+                file_path or file_name,
                 "modified"
             )
             
@@ -509,7 +516,8 @@ class FileUploadHandler:
                 payload=payload,
                 project_id=project_id,
                 conversation_id=conversation_id,
-                role=role
+                role=role,
+                file_path=file_path or file_name
             )
             
             # Thêm thông tin diff vào result
