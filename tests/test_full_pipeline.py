@@ -30,21 +30,21 @@ EXPECTED_REQUEST_METRICS = {
         "messages": 2,
         "contexts": 3,
         "tools": 2,
-        "checkpoints": 0,
+        "checkpoints": 1,
         "code_changes": 0,
     },
     "req_fix_login_bug_001": {
         "messages": 2,
         "contexts": 3,
         "tools": 3,
-        "checkpoints": 0,
+        "checkpoints": 2,
         "code_changes": 2,
     },
     "req_improve_auth_001": {
         "messages": 2,
         "contexts": 2,
         "tools": 1,
-        "checkpoints": 0,
+        "checkpoints": 1,
         "code_changes": 0,
     },
 }
@@ -69,6 +69,16 @@ def make_tool_call(tool_name: str, status: str = "success", execution_time_ms: i
         "arguments_hash": hashlib.sha256(f"{tool_name}:args".encode()).hexdigest(),
         "status": status,
         "execution_time_ms": execution_time_ms
+    }
+
+
+def make_checkpoint(checkpoint_id: str, parent: str | None = None, git_hash: str | None = None) -> dict:
+    """Helper: Create checkpoint payload"""
+    return {
+        "checkpoint_id": checkpoint_id,
+        "parent_checkpoint": parent,
+        "workspace_dir": "~/.innocody/cache/shadow_git",
+        "git_hash": git_hash or hashlib.sha256(checkpoint_id.encode()).hexdigest()[:12]
     }
 
 
@@ -116,6 +126,7 @@ def create_conversation_payload(
     tool_calls: list,
     model: str = "gpt-4-turbo",
     code_changes: list | None = None,
+    checkpoints: list | None = None,
 ):
     """
     Helper: Tạo realistic Innocody conversation payload
@@ -152,7 +163,7 @@ def create_conversation_payload(
         ],
         "context_files": context_files,
         "tool_calls": tool_calls,
-        "checkpoints": [],
+        "checkpoints": checkpoints or [],
         "code_changes": code_changes or [],
         "model_response": {
             "model": model,
@@ -291,6 +302,9 @@ async def test_full_pipeline():
             tool_calls=[
                 make_tool_call("read_file", "success", 245),
                 make_tool_call("grep_search", "success", 180)
+            ],
+            checkpoints=[
+                make_checkpoint("cp_analyze_001", parent=None, git_hash="a1b2c3d4e5f6")
             ]
         )
         
@@ -340,6 +354,10 @@ async def test_full_pipeline():
                 make_tool_call("read_file", "success", 198),
                 make_tool_call("edit_file", "success", 421),
                 make_tool_call("run_tests", "success", 2340)
+            ],
+            checkpoints=[
+                make_checkpoint("cp_fix_bug_001", parent="cp_analyze_001", git_hash="b2c3d4e5f6a7"),
+                make_checkpoint("cp_fix_bug_002", parent="cp_fix_bug_001", git_hash="c3d4e5f6a7b8")
             ],
             code_changes=[
                 make_code_change(
@@ -436,6 +454,9 @@ async def test_full_pipeline():
             ],
             tool_calls=[
                 make_tool_call("read_file", "success", 156)
+            ],
+            checkpoints=[
+                make_checkpoint("cp_improve_001", parent="cp_fix_bug_002", git_hash="d4e5f6a7b8c9")
             ]
         )
         
