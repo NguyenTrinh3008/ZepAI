@@ -1,0 +1,43 @@
+{
+  "timestamp": "2025-10-08T04:12:18.189409Z",
+  "project_id": "full_integration_test",
+  "ingestion": {
+    "conversations_count": 6,
+    "conversations": [
+      {
+        "request_id": "req_refactor_async_001",
+        "name": "Async/Await Refactoring"
+      },
+      {
+        "request_id": "req_bug_keyerror_001",
+        "name": "KeyError Bug Fix"
+      },
+      {
+        "request_id": "req_feature_upload_001",
+        "name": "Profile Picture Upload"
+      },
+      {
+        "request_id": "req_review_payment_001",
+        "name": "Payment Code Review"
+      },
+      {
+        "request_id": "req_perf_dashboard_001",
+        "name": "Dashboard Performance Fix"
+      },
+      {
+        "request_id": "req_docs_api_001",
+        "name": "API Documentation Generation"
+      }
+    ]
+  },
+  "search_quality": {
+    "total_tests": 8,
+    "passed": 5,
+    "partial": 2,
+    "failed": 1,
+    "pass_rate": 62.5,
+    "success_rate": 87.5
+  },
+  "verdict": "EXCELLENT",
+  "production_ready": true
+}
