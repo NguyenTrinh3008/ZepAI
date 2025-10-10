@@ -32,6 +32,14 @@ class SearchRequest(BaseModel):
     query: str
     focal_node_uuid: Optional[str] = None
     group_id: Optional[str] = None  # Filter by conversation group
+    limit: int = 10  # Maximum number of results to return
+    rerank_strategy: Optional[str] = "rrf"  # Reranking strategy: rrf, mmr, cross_encoder, node_distance, episode_mentions, none
+    
+    # LLM-powered classification context (optional)
+    use_llm_classification: bool = False  # Enable LLM-based strategy selection
+    current_file: Optional[str] = None  # Current file being edited
+    conversation_type: Optional[str] = None  # debugging, learning, implementation, exploration
+    recent_queries: Optional[List[str]] = None  # Recent search queries for context
 
 # =============================================================================
 # SIMPLE CODE CHANGE SCHEMA - For UI testing

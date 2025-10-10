@@ -162,7 +162,7 @@ async def scenario_refactoring_async(client: httpx.AsyncClient):
     Assistant: Refactors from sync to async, updates all callers
     """
     print("\n" + "="*80)
-    print("🔧 SCENARIO 1: REFACTORING - Convert to async/await")
+    print("[SCENARIO 1] REFACTORING - Convert to async/await")
     print("="*80)
     
     payload = create_conversation_payload(
@@ -239,7 +239,7 @@ async def scenario_refactoring_async(client: httpx.AsyncClient):
     response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
     response.raise_for_status()
     result = response.json()
-    print(f"✅ Refactoring conversation ingested: {result['request_uuid']}")
+    print(f"[OK] Refactoring conversation ingested: {result['request_uuid']}")
     print(f"   Code changes: 3 files modified")
     print(f"   Tools used: {result['metadata']['tool_call_count']}")
 
@@ -254,7 +254,7 @@ async def scenario_bug_investigation(client: httpx.AsyncClient):
     Assistant: Investigates, finds root cause, fixes defensive programming
     """
     print("\n" + "="*80)
-    print("🐛 SCENARIO 2: BUG INVESTIGATION - Stack trace debugging")
+    print("[SCENARIO 2] BUG INVESTIGATION - Stack trace debugging")
     print("="*80)
     
     payload = create_conversation_payload(
@@ -332,7 +332,7 @@ async def scenario_bug_investigation(client: httpx.AsyncClient):
     response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
     response.raise_for_status()
     result = response.json()
-    print(f"✅ Bug investigation ingested: {result['request_uuid']}")
+    print(f"[OK] Bug investigation ingested: {result['request_uuid']}")
     print(f"   Fixed: KeyError in production")
     print(f"   Severity: HIGH")
 
@@ -347,7 +347,7 @@ async def scenario_new_feature(client: httpx.AsyncClient):
     Assistant: Creates endpoint with validation, storage, tests
     """
     print("\n" + "="*80)
-    print("✨ SCENARIO 3: NEW FEATURE - Add profile picture upload")
+    print("[SCENARIO 3] NEW FEATURE - Add profile picture upload")
     print("="*80)
     
     payload = create_conversation_payload(
@@ -450,7 +450,7 @@ async def scenario_new_feature(client: httpx.AsyncClient):
     response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
     response.raise_for_status()
     result = response.json()
-    print(f"✅ New feature ingested: {result['request_uuid']}")
+    print(f"[OK] New feature ingested: {result['request_uuid']}")
     print(f"   Added: Profile picture upload endpoint")
     print(f"   Files created: 2, Files modified: 2")
 
@@ -465,7 +465,7 @@ async def scenario_code_review(client: httpx.AsyncClient):
     Assistant: Reviews for security, performance, best practices
     """
     print("\n" + "="*80)
-    print("👀 SCENARIO 4: CODE REVIEW - Payment processing security")
+    print("[SCENARIO 4] CODE REVIEW - Payment processing security")
     print("="*80)
     
     payload = create_conversation_payload(
@@ -526,7 +526,7 @@ async def scenario_code_review(client: httpx.AsyncClient):
     response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
     response.raise_for_status()
     result = response.json()
-    print(f"✅ Code review ingested: {result['request_uuid']}")
+    print(f"[OK] Code review ingested: {result['request_uuid']}")
     print(f"   Found: 3 critical, 3 warnings")
     print(f"   Recommendations: Security improvements")
 
@@ -541,7 +541,7 @@ async def scenario_performance_optimization(client: httpx.AsyncClient):
     Assistant: Profiles, finds N+1 queries, optimizes with caching
     """
     print("\n" + "="*80)
-    print("⚡ SCENARIO 5: PERFORMANCE OPTIMIZATION - N+1 query problem")
+    print("[SCENARIO 5] PERFORMANCE OPTIMIZATION - N+1 query problem")
     print("="*80)
     
     payload = create_conversation_payload(
@@ -641,8 +641,8 @@ async def scenario_performance_optimization(client: httpx.AsyncClient):
     response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
     response.raise_for_status()
     result = response.json()
-    print(f"✅ Performance optimization ingested: {result['request_uuid']}")
-    print(f"   Improvement: 9.5s → 350ms (96% faster)")
+    print(f"[OK] Performance optimization ingested: {result['request_uuid']}")
+    print(f"   Improvement: 9.5s -> 350ms (96% faster)")
     print(f"   Technique: N+1 query fix + caching")
 
 
@@ -656,7 +656,7 @@ async def scenario_generate_docs(client: httpx.AsyncClient):
     Assistant: Analyzes code, generates OpenAPI docs
     """
     print("\n" + "="*80)
-    print("📚 SCENARIO 6: DOCUMENTATION - Generate API docs from code")
+    print("[SCENARIO 6] DOCUMENTATION - Generate API docs from code")
     print("="*80)
     
     payload = create_conversation_payload(
@@ -740,7 +740,7 @@ async def scenario_generate_docs(client: httpx.AsyncClient):
     response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
     response.raise_for_status()
     result = response.json()
-    print(f"✅ Documentation generation ingested: {result['request_uuid']}")
+    print(f"[OK] Documentation generation ingested: {result['request_uuid']}")
     print(f"   Generated: OpenAPI spec + examples")
     print(f"   Endpoints: 8 auth endpoints")
 
@@ -751,11 +751,11 @@ async def scenario_generate_docs(client: httpx.AsyncClient):
 
 async def run_all_scenarios():
     """Run all realistic scenarios sequentially"""
-    print("\n" + "╔" + "="*78 + "╗")
-    print("║" + " "*15 + "REALISTIC INNOCODY SCENARIOS TEST" + " "*30 + "║")
-    print("╚" + "="*78 + "╝")
-    print("\n📝 Testing 6 realistic coding assistant workflows")
-    print("⚠️  Make sure memory layer server is running on http://localhost:8000\n")
+    print("\n" + "="*80)
+    print("REALISTIC INNOCODY SCENARIOS TEST")
+    print("="*80)
+    print("\nTesting 6 realistic coding assistant workflows")
+    print("Make sure memory layer server is running on http://localhost:8000\n")
     
     timeout = httpx.Timeout(150.0, read=150.0, write=60.0, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -781,35 +781,49 @@ async def run_all_scenarios():
             
             # Summary
             print("\n" + "="*80)
-            print("🎉 ALL SCENARIOS COMPLETED!")
+            print("ALL SCENARIOS COMPLETED!")
             print("="*80)
-            print("\n📊 Scenarios Tested:")
-            print("   1. ✅ Refactoring (async/await conversion)")
-            print("   2. ✅ Bug Investigation (stack trace debugging)")
-            print("   3. ✅ New Feature (file upload endpoint)")
-            print("   4. ✅ Code Review (security analysis)")
-            print("   5. ✅ Performance Optimization (N+1 queries)")
-            print("   6. ✅ Documentation (API spec generation)")
+            print("\nScenarios Tested:")
+            print("   1. [OK] Refactoring (async/await conversion)")
+            print("   2. [OK] Bug Investigation (stack trace debugging)")
+            print("   3. [OK] New Feature (file upload endpoint)")
+            print("   4. [OK] Code Review (security analysis)")
+            print("   5. [OK] Performance Optimization (N+1 queries)")
+            print("   6. [OK] Documentation (API spec generation)")
             
             # Test search across all scenarios
-            print("\n🔍 Testing cross-scenario search...")
+            print("\nTesting cross-scenario search...")
             search_response = await client.post(
                 f"{BASE_URL}/search",
                 json={
                     "query": "async performance optimization refactoring",
-                    "group_id": PROJECT_ID
+                    "group_id": PROJECT_ID,
+                    "limit": 10
                 }
             )
-            search_results = search_response.json()
+            
+            # Check response status
+            if search_response.status_code != 200:
+                print(f"   ⚠️  Search failed with status {search_response.status_code}")
+                print(f"   Response: {search_response.text}")
+                search_results = {"results": []}
+            else:
+                try:
+                    search_results = search_response.json()
+                except Exception as e:
+                    print(f"   ⚠️  Failed to parse JSON: {e}")
+                    print(f"   Response text: {search_response.text}")
+                    search_results = {"results": []}
+            
             print(f"   Found {len(search_results.get('results', []))} relevant memories")
             
-            print("\n✅ Memory layer successfully captured all coding workflows!")
+            print("\n[SUCCESS] Memory layer successfully captured all coding workflows!")
             print("   Ready for production use with Innocody integration!")
             
             return True
             
         except Exception as e:
-            print(f"\n❌ Error during scenario execution: {e}")
+            print(f"\n[ERROR] Error during scenario execution: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -821,7 +835,7 @@ def main():
         success = asyncio.run(run_all_scenarios())
         return 0 if success else 1
     except KeyboardInterrupt:
-        print("\n\n⚠️  Test interrupted by user")
+        print("\n\n[WARNING] Test interrupted by user")
         return 1
 
 

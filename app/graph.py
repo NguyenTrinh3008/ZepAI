@@ -7,6 +7,7 @@ from typing import Dict, Optional, Any
 from dotenv import load_dotenv
 from graphiti_core import Graphiti
 from app.cache import cached_with_ttl
+from app.config import neo4j, cache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -51,13 +52,13 @@ async def get_graphiti() -> Graphiti:
         # Check Graphiti docs for embedding configuration
         
         _graphiti = Graphiti(
-            uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-            user=os.getenv("NEO4J_USER", "neo4j"),
-            password=os.getenv("NEO4J_PASSWORD", "neo4j"),
+            uri=neo4j.get_uri(),
+            user=neo4j.get_user(),
+            password=neo4j.get_password(),
         )
     return _graphiti
 
-@cached_with_ttl(ttl=3600, key_prefix="graphiti_search")
+@cached_with_ttl(ttl=cache.GRAPHITI_SEARCH_TTL_SECONDS, key_prefix="graphiti_search")
 async def cached_search(query: str, focal_node_uuid: str = None):
     """Cached search function"""
     graphiti = await get_graphiti()
@@ -66,7 +67,7 @@ async def cached_search(query: str, focal_node_uuid: str = None):
     else:
         return await graphiti.search(query)
 
-@cached_with_ttl(ttl=1800, key_prefix="graphiti_node")
+@cached_with_ttl(ttl=cache.NODE_CACHE_TTL_SECONDS, key_prefix="graphiti_node")
 async def cached_get_node(node_uuid: str):
     """Cached get node function"""
     graphiti = await get_graphiti()

@@ -80,11 +80,19 @@ class MemoryCache:
             ) / (1024 * 1024)
         }
 
-# Global cache instance
-memory_cache = MemoryCache(default_ttl=3600)  # 1 hour
+# Global cache instance (initialized with default, uses config when available)
+try:
+    from app.config import cache as cfg
+    memory_cache = MemoryCache(default_ttl=cfg.DEFAULT_CACHE_TTL_SECONDS)
+except ImportError:
+    # Fallback if config not yet available
+    memory_cache = MemoryCache(default_ttl=3600)
 
-def cached_with_ttl(ttl: int = 3600, key_prefix: str = ""):
+def cached_with_ttl(ttl: Optional[int] = None, key_prefix: str = ""):
     """Decorator để cache function với TTL"""
+    # Import here to avoid circular import issues
+    from app.config import cache as cfg
+    actual_ttl = ttl if ttl is not None else cfg.DEFAULT_CACHE_TTL_SECONDS
     def decorator(func):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
@@ -98,7 +106,7 @@ def cached_with_ttl(ttl: int = 3600, key_prefix: str = ""):
             
             # Thực hiện function và cache kết quả
             result = await func(*args, **kwargs)
-            memory_cache.set(cache_key, result, ttl)
+            memory_cache.set(cache_key, result, actual_ttl)
             return result
         
         @wraps(func)
@@ -113,7 +121,7 @@ def cached_with_ttl(ttl: int = 3600, key_prefix: str = ""):
             
             # Thực hiện function và cache kết quả
             result = func(*args, **kwargs)
-            memory_cache.set(cache_key, result, ttl)
+            memory_cache.set(cache_key, result, actual_ttl)
             return result
         
         # Trả về wrapper phù hợp
@@ -125,8 +133,8 @@ def cached_with_ttl(ttl: int = 3600, key_prefix: str = ""):
     return decorator
 
 # Cache cho search results
-def cache_search_result(query: str, focal_node_uuid: Optional[str] = None, group_id: Optional[str] = None, ttl: int = 1800):
-    """Cache kết quả search với TTL 30 phút"""
+def cache_search_result(query: str, focal_node_uuid: Optional[str] = None, group_id: Optional[str] = None):
+    """Generate cache key for search results"""
     # Tránh lỗi f-string lồng nhau bằng cách tạo chuỗi riêng để băm
     to_hash = f"{query}:{focal_node_uuid or ''}:{group_id or ''}"
     digest = hashlib.md5(to_hash.encode()).hexdigest()
@@ -140,13 +148,13 @@ def get_embedding_cache_key(text: str) -> str:
     return f"embedding:{hashlib.md5(text.encode()).hexdigest()}"
 
 # Cache cho node data
-def cache_node_data(node_uuid: str, ttl: int = 3600):
-    """Cache dữ liệu node với TTL 1 giờ"""
+def cache_node_data(node_uuid: str):
+    """Generate cache key for node data"""
     return f"node:{node_uuid}"
 
 # Cache cho graph connections
-def cache_connections(node_uuid: str, ttl: int = 1800):
-    """Cache connections của node với TTL 30 phút"""
+def cache_connections(node_uuid: str):
+    """Generate cache key for node connections"""
     return f"connections:{node_uuid}"
 
 # Utility functions

@@ -11,6 +11,7 @@ from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
 
 from app.graph import create_relationship, find_or_create_file_entity
+from app.config import cache
 
 from .schemas import (
     IngestConversationContext,
@@ -21,9 +22,6 @@ from .schemas import (
     CheckpointPayload,
     CodeChangeMetadata,
 )
-
-
-TTL_DAYS = 2  # Conversation context expires in 2 days
 
 
 async def _create_entity_node(graphiti: Graphiti, labels: List[str], properties: Dict[str, Any]) -> str:
@@ -140,7 +138,7 @@ async def create_request_node(
 ) -> str:
     """Ensure Request entity exists and update metadata"""
     ts = datetime.fromisoformat(timestamp.replace('Z', ''))
-    expires_at = ts + timedelta(days=TTL_DAYS)
+    expires_at = ts + timedelta(days=cache.get_conversation_ttl_days())
 
     # Try to find existing Request created during ingestion
     lookup_query = """
@@ -205,7 +203,7 @@ async def create_message_node(
     project_id: str
 ) -> str:
     """Create Message entity node."""
-    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=TTL_DAYS)
+    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=cache.get_conversation_ttl_days())
 
     entity_uuid = await _create_entity_node(
         graphiti,
@@ -252,7 +250,7 @@ async def create_context_file_node(
     project_id: str
 ) -> str:
     """Create ContextFile entity node."""
-    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=TTL_DAYS)
+    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=cache.get_conversation_ttl_days())
     symbols_str = ', '.join(context_file.symbols) if context_file.symbols else 'none'
 
     entity_uuid = await _create_entity_node(
@@ -301,7 +299,7 @@ async def create_tool_call_node(
     project_id: str
 ) -> str:
     """Create ToolCall entity node."""
-    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=TTL_DAYS)
+    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=cache.get_conversation_ttl_days())
 
     entity_uuid = await _create_entity_node(
         graphiti,
@@ -346,7 +344,7 @@ async def create_checkpoint_node(
     project_id: str
 ) -> str:
     """Create Checkpoint entity node."""
-    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=TTL_DAYS)
+    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=cache.get_conversation_ttl_days())
 
     entity_uuid = await _create_entity_node(
         graphiti,
@@ -388,7 +386,7 @@ async def create_code_change_node(
     project_id: str
 ) -> str:
     """Create a CodeChange entity and connect it to the related CodeFile."""
-    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=TTL_DAYS)
+    expires_at = datetime.fromisoformat(timestamp.replace('Z', '')) + timedelta(days=cache.get_conversation_ttl_days())
     metadata = code_change.model_dump()
 
     entity_uuid = await _create_entity_node(

@@ -55,14 +55,14 @@ class CodeContextFormatter(ContextFormatter):
     
     @staticmethod
     def format_single_memory(memory: Dict[str, Any], include_metadata: bool = True) -> str:
-        """Format a single code memory into readable text
+        """Format a single code memory into readable text with full metadata
         
         Args:
             memory: Memory dict from search results
             include_metadata: Whether to include file/function metadata
             
         Returns:
-            Formatted string representation
+            Formatted string representation with enhanced metadata
         """
         parts = []
         
@@ -70,29 +70,55 @@ class CodeContextFormatter(ContextFormatter):
         text = memory.get('text', memory.get('summary', ''))
         parts.append(text)
         
-        # Metadata
+        # Enhanced metadata
         if include_metadata:
             meta_parts = []
             
+            # File and function
             if memory.get('file_path'):
                 file_path = memory['file_path']
                 if memory.get('function_name'):
                     meta_parts.append(f"{file_path}::{memory['function_name']}()")
                 else:
-                    meta_parts.append(file_path)
+                    meta_parts.append(f"{file_path}")
             
+            # Change type and severity
             if memory.get('change_type'):
-                meta_parts.append(f"[{memory['change_type']}]")
+                meta_parts.append(f"[{memory['change_type'].upper()}]")
             
             if memory.get('severity'):
-                meta_parts.append(f"severity: {memory['severity']}")
+                meta_parts.append(f"{memory['severity']}")
             
+            # Code changes (lines)
+            if memory.get('lines_added') is not None or memory.get('lines_removed') is not None:
+                added = memory.get('lines_added', 0)
+                removed = memory.get('lines_removed', 0)
+                meta_parts.append(f"+{added}/-{removed} lines")
+            
+            # Language
+            if memory.get('language'):
+                meta_parts.append(f"{memory['language']}")
+            
+            # Imports
+            if memory.get('imports'):
+                imports = memory['imports'] if isinstance(memory['imports'], list) else [memory['imports']]
+                if imports:
+                    meta_parts.append(f"imports: {', '.join(imports)}")
+            
+            # Conversation context
+            if memory.get('chat_id'):
+                meta_parts.append(f"chat: {memory['chat_id']}")
+            
+            if memory.get('model'):
+                meta_parts.append(f"model: {memory['model']}")
+            
+            # Timestamp
             if memory.get('created_at'):
                 time_ago = ContextFormatter.format_timestamp(memory['created_at'])
-                meta_parts.append(time_ago)
+                meta_parts.append(f"{time_ago}")
             
             if meta_parts:
-                parts.append(f"  ({', '.join(meta_parts)})")
+                parts.append(f"  ({' | '.join(meta_parts)})")
         
         return "\n".join(parts)
     
@@ -117,7 +143,7 @@ class CodeContextFormatter(ContextFormatter):
         # Format each file group
         sections = []
         for file_path, file_mems in by_file.items():
-            section = [f"📄 **{file_path}**"]
+            section = [f"**{file_path}**"]
             for mem in file_mems:
                 text = mem.get('text', mem.get('summary', ''))
                 change_type = mem.get('change_type') or ''  # Handle None
@@ -234,46 +260,89 @@ class CodeContextFormatter(ContextFormatter):
     
     @staticmethod
     def format_detailed(memories: List[Dict[str, Any]]) -> str:
-        """Detailed format with all available metadata
+        """Detailed format with all available metadata (enhanced for AI)
         
         Args:
             memories: List of memory dicts
             
         Returns:
-            Comprehensive formatted context
+            Comprehensive formatted context with full metadata
         """
         if not memories:
             return "No code context available."
         
         sections = []
         for i, mem in enumerate(memories, 1):
-            section = [f"{'='*60}"]
-            section.append(f"Memory #{i}")
-            section.append(f"{'='*60}\n")
+            section = [f"{'='*70}"]
+            section.append(f"Code Memory #{i}: {mem.get('name', 'Unknown')}")
+            section.append(f"{'='*70}\n")
             
-            # Content
+            # Main content
             text = mem.get('text', mem.get('summary', 'No description'))
-            section.append(f"**Content:** {text}\n")
+            section.append(f"**Description:**\n  {text}\n")
             
-            # Metadata
+            # File and code location
             if mem.get('file_path'):
                 section.append(f"**File:** {mem['file_path']}")
-            
             if mem.get('function_name'):
                 section.append(f"**Function:** {mem['function_name']}()")
             
+            # Change details
             if mem.get('change_type'):
-                section.append(f"**Change Type:** {mem['change_type']}")
+                section.append(f"**Change Type:** {mem['change_type'].upper()}")
             
             if mem.get('change_summary'):
                 section.append(f"**Change Summary:** {mem['change_summary']}")
             
+            # Severity and impact
             if mem.get('severity'):
                 section.append(f"**Severity:** {mem['severity']}")
             
+            # Code metrics
+            if mem.get('lines_added') is not None or mem.get('lines_removed') is not None:
+                added = mem.get('lines_added', 0)
+                removed = mem.get('lines_removed', 0)
+                delta = added - removed
+                section.append(f"**Code Changes:** +{added}/-{removed} lines (net: {delta:+d})")
+            
+            if mem.get('language'):
+                section.append(f"**Language:** {mem['language']}")
+            
+            # Dependencies
+            if mem.get('imports'):
+                imports = mem['imports'] if isinstance(mem['imports'], list) else [mem['imports']]
+                if imports:
+                    section.append(f"**Imports:** {', '.join(imports)}")
+            
+            # Conversation context
+            if mem.get('chat_id'):
+                section.append(f"**Chat ID:** {mem['chat_id']}")
+            
+            if mem.get('chat_mode'):
+                section.append(f"**Chat Mode:** {mem['chat_mode']}")
+            
+            if mem.get('model'):
+                section.append(f"**Model:** {mem['model']}")
+            
+            if mem.get('total_tokens'):
+                section.append(f"**Tokens Used:** {mem['total_tokens']:,}")
+            
+            # Related information
+            if mem.get('related_nodes'):
+                section.append(f"\n**Related Changes:**")
+                for j, related in enumerate(mem['related_nodes'][:3], 1):
+                    rel_type = related.get('type', 'Unknown')
+                    rel_name = related.get('name', 'N/A')
+                    rel_file = related.get('file_path', '')
+                    if rel_file:
+                        section.append(f"  {j}. [{rel_type}] {rel_name} ({rel_file})")
+                    else:
+                        section.append(f"  {j}. [{rel_type}] {rel_name}")
+            
+            # Timestamp
             if mem.get('created_at'):
                 time_ago = ContextFormatter.format_timestamp(mem['created_at'])
-                section.append(f"**When:** {time_ago}")
+                section.append(f"\n**When:** {time_ago}")
             
             sections.append("\n".join(section))
         
@@ -281,29 +350,263 @@ class CodeContextFormatter(ContextFormatter):
 
 
 class ConversationContextFormatter(ContextFormatter):
-    """Format general conversation memories"""
+    """Format general conversation memories with enhanced metadata"""
     
     @staticmethod
     def format_list(memories: List[Dict[str, Any]], limit: int = 10) -> str:
-        """Simple bulleted list of facts"""
+        """Simple bulleted list of facts with metadata"""
         if not memories:
             return "No conversation context available."
         
         lines = ["**Relevant Facts:**\n"]
         for mem in memories[:limit]:
             text = mem.get('text', mem.get('fact', ''))
-            lines.append(f"• {text}")
+            meta = []
+            
+            # Add compact metadata
+            if mem.get('file_path'):
+                meta.append(f"{mem['file_path']}")
+            if mem.get('severity'):
+                meta.append(f"{mem['severity']}")
+            if mem.get('chat_id'):
+                meta.append(f"chat: {mem['chat_id']}")
+            
+            if meta:
+                lines.append(f"• {text} ({' '.join(meta)})")
+            else:
+                lines.append(f"• {text}")
         
         return "\n".join(lines)
     
     @staticmethod
     def format_categorized(memories: List[Dict[str, Any]]) -> str:
-        """Group conversation memories by category/type"""
+        """Group conversation memories by type/severity"""
         if not memories:
             return "No conversation context available."
         
-        # This would require category metadata - placeholder for now
-        return ConversationContextFormatter.format_list(memories)
+        # Group by severity
+        by_severity = {'high': [], 'medium': [], 'low': [], 'other': []}
+        for mem in memories:
+            severity = mem.get('severity', 'other')
+            by_severity[severity].append(mem)
+        
+        sections = []
+        
+        # High priority first
+        if by_severity['high']:
+            sections.append("**High Priority Changes:**")
+            for mem in by_severity['high']:
+                text = mem.get('text', mem.get('summary', ''))
+                file = mem.get('file_path', '')
+                if file:
+                    sections.append(f"  • {text} ({file})")
+                else:
+                    sections.append(f"  • {text}")
+        
+        # Medium priority
+        if by_severity['medium']:
+            sections.append("\n**Medium Priority Changes:**")
+            for mem in by_severity['medium']:
+                text = mem.get('text', mem.get('summary', ''))
+                file = mem.get('file_path', '')
+                if file:
+                    sections.append(f"  • {text} ({file})")
+                else:
+                    sections.append(f"  • {text}")
+        
+        # Low priority
+        if by_severity['low']:
+            sections.append("\n**Low Priority Changes:**")
+            for mem in by_severity['low'][:5]:  # Limit low priority
+                text = mem.get('text', mem.get('summary', ''))
+                sections.append(f"  • {text}")
+        
+        # Other
+        if by_severity['other']:
+            sections.append("\n**Other Context:**")
+            for mem in by_severity['other'][:3]:
+                text = mem.get('text', mem.get('summary', ''))
+                sections.append(f"  • {text}")
+        
+        return "\n".join(sections) if sections else "No conversation context available."
+
+
+# =============================================================================
+# AI-Optimized Formatter
+# =============================================================================
+
+class AIContextFormatter(ContextFormatter):
+    """Optimized formatter for AI/LLM consumption"""
+    
+    @staticmethod
+    def _format_header(query: str) -> str:
+        """Format context header with optional query"""
+        if query:
+            return f"**Context for: '{query}'**\n"
+        return "**Relevant Context from Knowledge Graph:**\n"
+    
+    @staticmethod
+    def _format_location(mem: Dict[str, Any]) -> Optional[str]:
+        """Format file location and function line"""
+        if not mem.get('file_path'):
+            return None
+        
+        file_line = f"   Location: `{mem['file_path']}`"
+        if mem.get('function_name'):
+            file_line += f" → `{mem['function_name']}()`"
+        return file_line
+    
+    @staticmethod
+    def _format_change_info(mem: Dict[str, Any]) -> Optional[str]:
+        """Format change type and severity line"""
+        change_info = []
+        if mem.get('change_type'):
+            change_info.append(f"Type: {mem['change_type']}")
+        if mem.get('severity'):
+            change_info.append(f"Priority: {mem['severity']}")
+        return f"   {' | '.join(change_info)}" if change_info else None
+    
+    @staticmethod
+    def _format_code_metrics(mem: Dict[str, Any]) -> Optional[str]:
+        """Format code change metrics (lines added/removed)"""
+        if mem.get('lines_added') is not None or mem.get('lines_removed') is not None:
+            added = mem.get('lines_added', 0)
+            removed = mem.get('lines_removed', 0)
+            return f"   Impact: +{added}/-{removed} lines"
+        return None
+    
+    @staticmethod
+    def _format_tech_info(mem: Dict[str, Any]) -> Optional[str]:
+        """Format language and imports line"""
+        tech_info = []
+        if mem.get('language'):
+            tech_info.append(f"Language: {mem['language']}")
+        if mem.get('imports'):
+            imports = mem['imports'] if isinstance(mem['imports'], list) else [mem['imports']]
+            if imports:
+                tech_info.append(f"Uses: {', '.join(imports)}")
+        return f"   {' | '.join(tech_info)}" if tech_info else None
+    
+    @staticmethod
+    def _format_conversation_context(mem: Dict[str, Any]) -> Optional[str]:
+        """Format conversation metadata (chat, model, mode)"""
+        if not (mem.get('chat_id') or mem.get('model')):
+            return None
+        
+        conv_info = []
+        if mem.get('chat_id'):
+            conv_info.append(f"Chat: {mem['chat_id']}")
+        if mem.get('model'):
+            conv_info.append(f"Model: {mem['model']}")
+        if mem.get('chat_mode'):
+            conv_info.append(f"Mode: {mem['chat_mode']}")
+        return f"   Context: {' | '.join(conv_info)}" if conv_info else None
+    
+    @staticmethod
+    def _format_related_nodes(mem: Dict[str, Any], include_related: bool) -> List[str]:
+        """Format related nodes section"""
+        if not include_related or not mem.get('related_nodes'):
+            return []
+        
+        related = mem['related_nodes'][:2]  # Limit to 2 most relevant
+        if not related:
+            return []
+        
+        lines = ["   Related:"]
+        for rel in related:
+            rel_type = rel.get('type', 'Unknown')
+            rel_name = rel.get('name', 'N/A')
+            rel_file = rel.get('file_path')
+            if rel_file:
+                lines.append(f"      - [{rel_type}] {rel_name} ({rel_file})")
+            else:
+                lines.append(f"      - [{rel_type}] {rel_name}")
+        return lines
+    
+    @staticmethod
+    def _format_timestamp(mem: Dict[str, Any]) -> Optional[str]:
+        """Format timestamp line"""
+        if mem.get('created_at'):
+            time_ago = ContextFormatter.format_timestamp(mem['created_at'])
+            return f"   When: {time_ago}"
+        return None
+    
+    @staticmethod
+    def _format_single_memory(mem: Dict[str, Any], index: int, include_related: bool) -> List[str]:
+        """Format a single memory with all its metadata"""
+        lines = []
+        
+        # Main description
+        text = mem.get('text', mem.get('summary', 'No description'))
+        lines.append(f"{index}. {text}")
+        
+        # Add metadata lines (each helper returns None or a formatted string)
+        metadata_lines = [
+            AIContextFormatter._format_location(mem),
+            AIContextFormatter._format_change_info(mem),
+            AIContextFormatter._format_code_metrics(mem),
+            AIContextFormatter._format_tech_info(mem),
+            AIContextFormatter._format_conversation_context(mem),
+            AIContextFormatter._format_timestamp(mem),
+        ]
+        
+        # Add non-None metadata lines
+        lines.extend([line for line in metadata_lines if line])
+        
+        # Add related nodes (returns list of lines)
+        lines.extend(AIContextFormatter._format_related_nodes(mem, include_related))
+        
+        return lines
+    
+    @staticmethod
+    def _format_footer(total: int, max_items: int) -> str:
+        """Format summary footer"""
+        if total > max_items:
+            return f"\nShowing top {max_items} of {total} relevant memories."
+        return ""
+    
+    @staticmethod
+    def format_for_ai(memories: List[Dict[str, Any]], 
+                      query: str = "",
+                      max_items: int = 5,
+                      include_related: bool = True) -> str:
+        """Format memories optimally for AI understanding and response generation
+        
+        This format prioritizes:
+        - Clarity: Clear structure that LLMs parse easily
+        - Relevance: Most important information first
+        - Conciseness: Avoids context window bloat
+        - Actionability: Includes metadata AI needs to provide specific answers
+        
+        Args:
+            memories: Search results from knowledge graph
+            query: Original user query (for context)
+            max_items: Maximum memories to include
+            include_related: Whether to include related nodes info
+            
+        Returns:
+            AI-optimized formatted context string
+        """
+        if not memories:
+            return "No relevant context found in knowledge graph."
+        
+        lines = [AIContextFormatter._format_header(query)]
+        
+        # Format each memory
+        for i, mem in enumerate(memories[:max_items], 1):
+            memory_lines = AIContextFormatter._format_single_memory(mem, i, include_related)
+            lines.extend(memory_lines)
+            
+            # Separator between memories
+            if i < min(len(memories), max_items):
+                lines.append("")  # Blank line
+        
+        # Summary footer
+        footer = AIContextFormatter._format_footer(len(memories), max_items)
+        if footer:
+            lines.append(footer)
+        
+        return "\n".join(lines)
 
 
 # =============================================================================
@@ -362,6 +665,44 @@ def format_conversation_context(memories: List[Dict[str, Any]],
         return formatter.format_categorized(memories)
     else:
         return formatter.format_list(memories, **kwargs)
+
+
+def format_for_ai(memories: List[Dict[str, Any]], 
+                  query: str = "",
+                  max_items: int = 5,
+                  include_related: bool = True) -> str:
+    """Format memories optimally for AI/LLM consumption
+    
+    Convenience function for AIContextFormatter.format_for_ai()
+    
+    This is the RECOMMENDED format for injecting knowledge graph context
+    into AI assistant prompts. It provides:
+    - Clear, parseable structure
+    - Rich metadata (file paths, severity, code metrics)
+    - Related context for deeper understanding
+    - Optimal balance of detail vs conciseness
+    
+    Args:
+        memories: Search results from knowledge graph
+        query: Original user query (for context header)
+        max_items: Maximum memories to include (default: 5)
+        include_related: Whether to include related nodes (default: True)
+        
+    Returns:
+        AI-optimized formatted context string
+        
+    Example:
+        >>> results = await search_knowledge_graph(query="async refactoring")
+        >>> context = format_for_ai(results['results'], query="async refactoring")
+        >>> # Inject context into AI prompt:
+        >>> prompt = f"Context: {context}\\n\\nUser: {user_question}"
+    """
+    return AIContextFormatter.format_for_ai(
+        memories=memories,
+        query=query,
+        max_items=max_items,
+        include_related=include_related
+    )
 
 
 # =============================================================================

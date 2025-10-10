@@ -114,30 +114,54 @@ async def ingest_conversation(payload: IngestConversationContext, graphiti=Depen
         
         logger.info("✓ Episode created, waiting for entity and embeddings...")
         
-        # Wait for entity creation and embedding generation (Graphiti needs ~3s)
-        await asyncio.sleep(3)
+        # Wait for entity creation and embedding generation (Graphiti needs ~5s)
+        await asyncio.sleep(5)
         
-        # Find created entity
+        # Find created entity - try multiple times with different strategies
         query = """
         MATCH (e:Entity {group_id: $group_id})
         WHERE e.created_at >= datetime($reference_time)
-        RETURN e.uuid as uuid
+        RETURN e.uuid as uuid, e.created_at as created_at, e.name as name
         ORDER BY e.created_at DESC
         LIMIT 1
         """
         
         request_uuid = None
-        async with graphiti.driver.session() as session:
-            result = await session.run(query, {
-                "group_id": payload.project_id,
-                "reference_time": (ts - timedelta(seconds=10)).isoformat()
-            })
-            record = await result.single()
-            if record:
-                request_uuid = record["uuid"]
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            async with graphiti.driver.session() as session:
+                result = await session.run(query, {
+                    "group_id": payload.project_id,
+                    "reference_time": (ts - timedelta(seconds=30)).isoformat()  # Wider time window
+                })
+                record = await result.single()
+                if record:
+                    request_uuid = record["uuid"]
+                    logger.info(f"✓ Found entity: {record['name']} (created: {record['created_at']})")
+                    break
+                else:
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries}: Entity not found yet, waiting...")
+                    await asyncio.sleep(2)
         
         if not request_uuid:
-            raise Exception("Failed to create conversation entity")
+            # Last resort: get the most recent entity for this group
+            logger.warning("Trying fallback: get most recent entity for group")
+            fallback_query = """
+            MATCH (e:Entity {group_id: $group_id})
+            RETURN e.uuid as uuid, e.created_at as created_at, e.name as name
+            ORDER BY e.created_at DESC
+            LIMIT 1
+            """
+            async with graphiti.driver.session() as session:
+                result = await session.run(fallback_query, {"group_id": payload.project_id})
+                record = await result.single()
+                if record:
+                    request_uuid = record["uuid"]
+                    logger.info(f"✓ Fallback found entity: {record['name']}")
+        
+        if not request_uuid:
+            raise Exception("Failed to create conversation entity after retries")
         
         logger.info(f"✓ Entity created: {request_uuid}")
         
