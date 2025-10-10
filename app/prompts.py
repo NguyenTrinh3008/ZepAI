@@ -153,22 +153,22 @@ Projects & Actions:
 **BAD Examples (Avoid These):**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-❌ "User said hello" 
+   "User said hello" 
    → Not persistent, just greeting
 
-❌ "User discussed programming"
+   "User discussed programming"
    → Too vague - what about programming?
    ✓ Better: "User learned Python async programming for I/O-bound tasks"
 
-❌ "User prefers Python"
+   "User prefers Python"
    → Missing context - why? for what?
    ✓ Better: "User prefers Python over C for web development due to faster iteration"
 
-❌ "User enhanced the game"
+   "User enhanced the game"
    → Too vague - what enhancements?
    ✓ Better: "User added obstacles and AI pathfinding to snake game"
 
-❌ "User is interested in AI"
+   "User is interested in AI"
    → Vague interest
    ✓ Better: "User is learning machine learning with TensorFlow for image classification projects"
 
