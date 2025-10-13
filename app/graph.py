@@ -31,6 +31,59 @@ def _patched_json_dumps(obj, **kwargs):
     return _original_json_dumps(obj, **kwargs)
 
 json.dumps = _patched_json_dumps
+
+# ============================================================================
+# MONKEY PATCH: Fix Graphiti's parse_db_date function for Neo4j DateTime with Z suffix
+# ============================================================================
+def _patched_parse_db_date(input_date):
+    """Fixed parse_db_date that handles Neo4j DateTime with Z suffix"""
+    if isinstance(input_date, str):
+        # Handle Neo4j DateTime format with Z suffix: '2025-10-10T10:15:27.803310Z'
+        if input_date.endswith('Z'):
+            # Replace Z with +00:00 for proper ISO format
+            input_date = input_date[:-1] + '+00:00'
+        return datetime.fromisoformat(input_date)
+    return input_date
+
+# Monkey patch parse_db_date in graphiti_core.helpers
+try:
+    import graphiti_core.helpers
+    graphiti_core.helpers.parse_db_date = _patched_parse_db_date
+    logger.info("✓ Patched parse_db_date function to handle Neo4j Z suffix")
+except Exception as e:
+    logger.warning(f"Could not patch parse_db_date: {e}")
+
+# ============================================================================
+# MONKEY PATCH: Fix EntityNode creation with None summary field
+# ============================================================================
+def _patched_get_entity_node_from_record(record, provider):
+    """Fixed get_entity_node_from_record that handles None summary field"""
+    from graphiti_core.nodes import get_entity_node_from_record as _original
+    from graphiti_core.nodes import EntityNode
+    
+    # Extract data from record
+    entity_data = dict(record)
+    
+    # Fix None summary field - replace with empty string
+    if entity_data.get('summary') is None:
+        entity_data['summary'] = ""
+    
+    # Create EntityNode with fixed data
+    try:
+        return EntityNode(**entity_data)
+    except Exception as e:
+        logger.warning(f"Error creating EntityNode with fixed data: {e}")
+        # Fallback to original function
+        return _original(record, provider)
+
+# Monkey patch get_entity_node_from_record in graphiti_core.nodes
+try:
+    import graphiti_core.nodes
+    graphiti_core.nodes.get_entity_node_from_record = _patched_get_entity_node_from_record
+    logger.info("✓ Patched get_entity_node_from_record function to handle None summary")
+except Exception as e:
+    logger.warning(f"Could not patch get_entity_node_from_record: {e}")
+
 # ============================================================================
 
 # Graphiti sẽ dùng mặc định OpenAI cho LLM/embeddings nếu có OPENAI_API_KEY
