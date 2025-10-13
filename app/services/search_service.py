@@ -543,49 +543,97 @@ async def search_knowledge_graph(
     Returns:
         Dict with "results" key containing list of search results
     """
-    # Check cache first
-    cache_key = cache_search_result(query, focal_node_uuid, group_id)
-    cached_result = memory_cache.get(cache_key)
-    if cached_result is not None:
-        logger.info("Cache hit for search query")
-        return cached_result
+    # Import tracer
+    from app.langfuse_tracer import SearchTracer
     
-    # Translate query if needed
-    search_query = await translate_query_if_needed(query)
-    
-    # Perform semantic search with reranking strategy
-    results = await _perform_search_with_reranking(
-        graphiti=graphiti,
-        query=search_query,
-        focal_node_uuid=focal_node_uuid,
-        limit=limit,
-        rerank_strategy=rerank_strategy
+    # Initialize Langfuse tracer
+    tracer = SearchTracer(
+        query=query,
+        strategy=rerank_strategy,
+        project_id=group_id
     )
     
-    # Normalize results
-    normalized = [normalize_search_result(r) for r in results]
-    
-    # Enrich metadata
-    await enrich_metadata(normalized, graphiti)
-    
-    # Filter by group_id if requested
-    if group_id:
-        await fetch_group_ids(normalized, graphiti)
-        normalized = [item for item in normalized if item.get("group_id") == group_id]
-    
-    # Deduplicate
-    deduped = deduplicate_results(normalized)
-    
-    # Filter query echoes
-    filtered = filter_query_echoes(deduped, query)
-    
-    # Finalize
-    finalize_results(filtered)
-    
-    # Cache result
-    result = {"results": filtered}
-    memory_cache.set(cache_key, result, ttl=cache.get_search_ttl())
-    
-    logger.info(f"Search completed: {len(filtered)} results")
-    return result
+    try:
+        # Check cache first
+        cache_key = cache_search_result(query, focal_node_uuid, group_id)
+        cached_result = memory_cache.get(cache_key)
+        if cached_result is not None:
+            logger.info("Cache hit for search query")
+            tracer.add_step("cache_hit", output="Retrieved from cache")
+            tracer.complete(
+                results_count=len(cached_result.get("results", [])),
+                metadata={"cache": "hit"}
+            )
+            return cached_result
+        
+        tracer.add_step("cache_miss", output="Cache miss, performing search")
+        
+        # Translate query if needed
+        search_query = await translate_query_if_needed(query)
+        if search_query != query:
+            tracer.add_step("query_translation", output=search_query, metadata={
+                "original": query,
+                "translated": search_query
+            })
+        
+        # Perform semantic search with reranking strategy
+        tracer.add_step("semantic_search", metadata={"strategy": rerank_strategy})
+        results = await _perform_search_with_reranking(
+            graphiti=graphiti,
+            query=search_query,
+            focal_node_uuid=focal_node_uuid,
+            limit=limit,
+            rerank_strategy=rerank_strategy
+        )
+        
+        # Normalize results
+        normalized = [normalize_search_result(r) for r in results]
+        tracer.add_step("normalization", output=f"Normalized {len(normalized)} results")
+        
+        # Enrich metadata
+        await enrich_metadata(normalized, graphiti)
+        tracer.add_step("metadata_enrichment", output=f"Enriched {len(normalized)} results")
+        
+        # Filter by group_id if requested
+        if group_id:
+            await fetch_group_ids(normalized, graphiti)
+            before_count = len(normalized)
+            normalized = [item for item in normalized if item.get("group_id") == group_id]
+            tracer.add_step("group_filter", metadata={
+                "group_id": group_id,
+                "before": before_count,
+                "after": len(normalized)
+            })
+        
+        # Deduplicate
+        deduped = deduplicate_results(normalized)
+        tracer.add_step("deduplication", output=f"{len(normalized)} -> {len(deduped)} results")
+        
+        # Filter query echoes
+        filtered = filter_query_echoes(deduped, query)
+        
+        # Finalize
+        finalize_results(filtered)
+        
+        # Cache result
+        result = {"results": filtered}
+        memory_cache.set(cache_key, result, ttl=cache.get_search_ttl())
+        
+        logger.info(f"Search completed: {len(filtered)} results")
+        
+        # Complete trace
+        tracer.complete(
+            results_count=len(filtered),
+            metadata={
+                "cache": "miss",
+                "strategy": rerank_strategy,
+                "translated": search_query != query
+            }
+        )
+        
+        return result
+        
+    except Exception as e:
+        tracer.error(str(e))
+        raise
 

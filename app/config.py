@@ -64,6 +64,58 @@ class LLMConfig:
 
 
 # =============================================================================
+# LANGFUSE CONFIGURATION
+# =============================================================================
+
+class LangfuseConfig:
+    """Langfuse tracing and observability configuration"""
+    
+    # Langfuse Cloud credentials
+    PUBLIC_KEY: Optional[str] = os.getenv("LANGFUSE_PUBLIC_KEY")
+    SECRET_KEY: Optional[str] = os.getenv("LANGFUSE_SECRET_KEY")
+    HOST: str = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    
+    # Service identification
+    SERVICE_NAME: str = os.getenv("SERVICE_NAME", "graphiti-memory-layer")
+    SERVICE_VERSION: str = os.getenv("SERVICE_VERSION", "1.0.0")
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    
+    # Feature flags
+    ENABLED: bool = os.getenv("LANGFUSE_ENABLED", "true").lower() == "true"
+    DEBUG: bool = os.getenv("LANGFUSE_DEBUG", "false").lower() == "true"
+    
+    # Sampling and batching
+    SAMPLE_RATE: float = float(os.getenv("LANGFUSE_SAMPLE_RATE", "1.0"))  # 1.0 = trace everything
+    FLUSH_INTERVAL: int = int(os.getenv("LANGFUSE_FLUSH_INTERVAL", "5"))  # seconds
+    
+    # Tracing configuration
+    TRACE_SEARCH_QUERIES: bool = True
+    TRACE_INGEST_OPERATIONS: bool = True
+    TRACE_LLM_CALLS: bool = True
+    TRACE_DATABASE_QUERIES: bool = False  # Can be verbose
+    
+    # Enhanced metadata
+    INCLUDE_REQUEST_ID: bool = True
+    INCLUDE_TIMESTAMP: bool = True
+    INCLUDE_USER_AGENT: bool = True
+    INCLUDE_SOURCE_INFO: bool = True
+    
+    @classmethod
+    def is_enabled(cls) -> bool:
+        """Check if Langfuse is enabled and configured"""
+        return cls.ENABLED and cls.PUBLIC_KEY and cls.SECRET_KEY
+    
+    @classmethod
+    def get_credentials(cls) -> dict:
+        """Get Langfuse credentials"""
+        return {
+            "public_key": cls.PUBLIC_KEY,
+            "secret_key": cls.SECRET_KEY,
+            "host": cls.HOST
+        }
+
+
+# =============================================================================
 # CACHE CONFIGURATION
 # =============================================================================
 
@@ -267,6 +319,7 @@ class AppConfig:
 # Export commonly used configs for easy access
 neo4j = Neo4jConfig
 llm = LLMConfig
+langfuse = LangfuseConfig
 cache = CacheConfig
 content = ContentConfig
 search = SearchConfig

@@ -15,6 +15,7 @@ from app.cache import (
     invalidate_search_cache,
     invalidate_node_cache
 )
+from app.langfuse_tracer import get_health_status, flush_langfuse
 
 router = APIRouter(prefix="", tags=["admin"])
 logger = logging.getLogger(__name__)
@@ -59,6 +60,30 @@ async def cache_health():
         "status": "healthy" if stats["active_entries"] > 0 else "empty",
         "stats": stats
     }
+
+
+# =============================================================================
+# LANGFUSE MONITORING
+# =============================================================================
+
+@router.get("/langfuse/health")
+async def check_langfuse_health():
+    """Check Langfuse tracing health status"""
+    return get_health_status()
+
+
+@router.post("/langfuse/flush")
+async def flush_langfuse_traces():
+    """Manually flush all pending traces to Langfuse"""
+    try:
+        flush_langfuse()
+        return {
+            "status": "success",
+            "message": "Langfuse traces flushed successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error flushing Langfuse: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to flush Langfuse: {str(e)}")
 
 
 # =============================================================================

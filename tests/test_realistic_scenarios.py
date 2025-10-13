@@ -1,6 +1,7 @@
 """
 REALISTIC INNOCODY SCENARIOS - Extended Test Cases
 Mô phỏng các workflow thực tế khi user dùng AI coding assistant
+WITH LANGFUSE TRACING INTEGRATION
 """
 
 import asyncio
@@ -8,12 +9,23 @@ import httpx
 from datetime import datetime
 import hashlib
 import uuid as uuid_lib
+import logging
 
 from dotenv import load_dotenv
 load_dotenv()
 
+# Import tracing helpers
+from test_tracing_helpers import (
+    init_test_session, trace_test_scenario, trace_conversation_ingest,
+    trace_error, flush_test_traces, log_test_summary
+)
+
 BASE_URL = "http://localhost:8000"
 PROJECT_ID = "innocody_test_project"
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -161,9 +173,10 @@ async def scenario_refactoring_async(client: httpx.AsyncClient):
     User: "Convert get_user_data() to async/await pattern"
     Assistant: Refactors from sync to async, updates all callers
     """
-    print("\n" + "="*80)
-    print("[SCENARIO 1] REFACTORING - Convert to async/await")
-    print("="*80)
+    with trace_test_scenario("Refactoring - Convert to async/await", "refactoring"):
+        print("\n" + "="*80)
+        print("[SCENARIO 1] REFACTORING - Convert to async/await")
+        print("="*80)
     
     payload = create_conversation_payload(
         request_id="req_refactor_async_001",
@@ -236,12 +249,13 @@ async def scenario_refactoring_async(client: httpx.AsyncClient):
         ]
     )
     
-    response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
-    response.raise_for_status()
-    result = response.json()
-    print(f"[OK] Refactoring conversation ingested: {result['request_uuid']}")
-    print(f"   Code changes: 3 files modified")
-    print(f"   Tools used: {result['metadata']['tool_call_count']}")
+    with trace_conversation_ingest("refactoring", "req_refactor_async_001"):
+        response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        print(f"[OK] Refactoring conversation ingested: {result['request_uuid']}")
+        print(f"   Code changes: 3 files modified")
+        print(f"   Tools used: {result['metadata']['tool_call_count']}")
 
 
 # =============================================================================
@@ -253,88 +267,90 @@ async def scenario_bug_investigation(client: httpx.AsyncClient):
     User: Pastes stack trace of KeyError
     Assistant: Investigates, finds root cause, fixes defensive programming
     """
-    print("\n" + "="*80)
-    print("[SCENARIO 2] BUG INVESTIGATION - Stack trace debugging")
-    print("="*80)
-    
-    payload = create_conversation_payload(
-        request_id="req_bug_keyerror_001",
-        chat_id="chat_debug_keyerror",
-        user_message=(
-            "I'm getting this error in production:\n\n"
-            "```\n"
-            "KeyError: 'user_preferences'\n"
-            "File 'api/profile.py', line 67, in get_profile\n"
-            "  theme = user_data['user_preferences']['theme']\n"
-            "```\n\n"
-            "It's happening randomly for some users. Can you help debug this?"
-        ),
-        assistant_message=(
-            "Found the issue! The KeyError occurs when users haven't set preferences yet.\n\n"
-            "**Root Cause:**\n"
-            "- New users don't have `user_preferences` key in their data\n"
-            "- Code assumes all users have preferences without checking\n\n"
-            "**Investigation Steps:**\n"
-            "1. Checked database schema → `user_preferences` is nullable\n"
-            "2. Found 847 users without preferences (12% of user base)\n"
-            "3. Code doesn't handle this edge case\n\n"
-            "**Fix Applied:**\n"
-            "```python\n"
-            "# Before:\n"
-            "theme = user_data['user_preferences']['theme']\n\n"
-            "# After:\n"
-            "preferences = user_data.get('user_preferences', {})\n"
-            "theme = preferences.get('theme', 'default')\n"
-            "```\n\n"
-            "**Additional Improvements:**\n"
-            "- Added default preferences initialization for new users\n"
-            "- Added migration script for existing users\n"
-            "- Added test for users without preferences\n\n"
-            "Error should be resolved ✅"
-        ),
-        context_files=[
-            make_context_file("api/profile.py", 0.96, "vecdb", ["get_profile", "update_profile"]),
-            make_context_file("models/user.py", 0.91, "ast", ["UserModel", "UserPreferences"]),
-            make_context_file("database/migrations/004_add_preferences.sql", 0.82, "vecdb", []),
-            make_context_file("tests/test_profile.py", 0.75, "ast", ["test_get_profile"])
-        ],
-        tool_calls=[
-            make_tool_call("read_file", "success", 189),
-            make_tool_call("grep_search", "success", 245),  # Search for user_preferences usage
-            make_tool_call("run_query", "success", 1250),  # Database query to check users
-            make_tool_call("edit_file", "success", 412),
-            make_tool_call("edit_file", "success", 234),  # Add test
-            make_tool_call("run_tests", "success", 2890)
-        ],
-        code_changes=[
-            make_code_change(
-                "api/profile.py",
-                "Added defensive programming for missing user_preferences with default fallback",
-                change_type="fixed",
-                severity="high",
-                lines_added=5,
-                lines_removed=2,
-                imports=["typing"],
-                function_name="get_profile"
+    with trace_test_scenario('Bug Investigation - Stack trace debugging', 'bug_fix'):
+        print("\n" + "="*80)
+        print("[SCENARIO 2] BUG INVESTIGATION - Stack trace debugging")
+        print("="*80)
+        
+        payload = create_conversation_payload(
+            request_id="req_bug_keyerror_001",
+            chat_id="chat_debug_keyerror",
+            user_message=(
+                "I'm getting this error in production:\n\n"
+                "```\n"
+                "KeyError: 'user_preferences'\n"
+                "File 'api/profile.py', line 67, in get_profile\n"
+                "  theme = user_data['user_preferences']['theme']\n"
+                "```\n\n"
+                "It's happening randomly for some users. Can you help debug this?"
             ),
-            make_code_change(
-                "tests/test_profile.py",
-                "Added test case for users without preferences to prevent regression",
-                change_type="added",
-                severity="low",
-                lines_added=12,
-                lines_removed=0,
-                function_name="test_profile_without_preferences"
-            )
-        ]
-    )
+            assistant_message=(
+                "Found the issue! The KeyError occurs when users haven't set preferences yet.\n\n"
+                "**Root Cause:**\n"
+                "- New users don't have `user_preferences` key in their data\n"
+                "- Code assumes all users have preferences without checking\n\n"
+                "**Investigation Steps:**\n"
+                "1. Checked database schema → `user_preferences` is nullable\n"
+                "2. Found 847 users without preferences (12% of user base)\n"
+                "3. Code doesn't handle this edge case\n\n"
+                "**Fix Applied:**\n"
+                "```python\n"
+                "# Before:\n"
+                "theme = user_data['user_preferences']['theme']\n\n"
+                "# After:\n"
+                "preferences = user_data.get('user_preferences', {})\n"
+                "theme = preferences.get('theme', 'default')\n"
+                "```\n\n"
+                "**Additional Improvements:**\n"
+                "- Added default preferences initialization for new users\n"
+                "- Added migration script for existing users\n"
+                "- Added test for users without preferences\n\n"
+                "Error should be resolved ✅"
+            ),
+            context_files=[
+                make_context_file("api/profile.py", 0.96, "vecdb", ["get_profile", "update_profile"]),
+                make_context_file("models/user.py", 0.91, "ast", ["UserModel", "UserPreferences"]),
+                make_context_file("database/migrations/004_add_preferences.sql", 0.82, "vecdb", []),
+                make_context_file("tests/test_profile.py", 0.75, "ast", ["test_get_profile"])
+            ],
+            tool_calls=[
+                make_tool_call("read_file", "success", 189),
+                make_tool_call("grep_search", "success", 245),  # Search for user_preferences usage
+                make_tool_call("run_query", "success", 1250),  # Database query to check users
+                make_tool_call("edit_file", "success", 412),
+                make_tool_call("edit_file", "success", 234),  # Add test
+                make_tool_call("run_tests", "success", 2890)
+            ],
+            code_changes=[
+                make_code_change(
+                    "api/profile.py",
+                    "Added defensive programming for missing user_preferences with default fallback",
+                    change_type="fixed",
+                    severity="high",
+                    lines_added=5,
+                    lines_removed=2,
+                    imports=["typing"],
+                    function_name="get_profile"
+                ),
+                make_code_change(
+                    "tests/test_profile.py",
+                    "Added test case for users without preferences to prevent regression",
+                    change_type="added",
+                    severity="low",
+                    lines_added=12,
+                    lines_removed=0,
+                    function_name="test_profile_without_preferences"
+                )
+            ]
+        )
     
-    response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
-    response.raise_for_status()
-    result = response.json()
-    print(f"[OK] Bug investigation ingested: {result['request_uuid']}")
-    print(f"   Fixed: KeyError in production")
-    print(f"   Severity: HIGH")
+        with trace_conversation_ingest("bug_investigation", "req_bug_keyerror_001"):
+            response = await client.post(f"{BASE_URL}/ingest/conversation", json=payload)
+            response.raise_for_status()
+            result = response.json()
+            print(f"[OK] Bug investigation ingested: {result['request_uuid']}")
+            print(f"   Fixed: KeyError in production")
+            print(f"   Severity: HIGH")
 
 
 # =============================================================================
@@ -750,10 +766,15 @@ async def scenario_generate_docs(client: httpx.AsyncClient):
 # =============================================================================
 
 async def run_all_scenarios():
-    """Run all realistic scenarios sequentially"""
+    """Run all realistic scenarios sequentially with Langfuse tracing"""
+    # Initialize test session
+    session_id = init_test_session("realistic_scenarios")
+    
     print("\n" + "="*80)
     print("REALISTIC INNOCODY SCENARIOS TEST")
+    print("WITH LANGFUSE TRACING")
     print("="*80)
+    print(f"Session ID: {session_id}")
     print("\nTesting 6 realistic coding assistant workflows")
     print("Make sure memory layer server is running on http://localhost:8000\n")
     
@@ -820,12 +841,18 @@ async def run_all_scenarios():
             print("\n[SUCCESS] Memory layer successfully captured all coding workflows!")
             print("   Ready for production use with Innocody integration!")
             
+            # Log test summary and flush traces
+            log_test_summary()
+            flush_test_traces()
+            
             return True
             
         except Exception as e:
             print(f"\n[ERROR] Error during scenario execution: {e}")
+            trace_error(str(e), {"session_id": session_id})
             import traceback
             traceback.print_exc()
+            flush_test_traces()
             return False
 
 
@@ -841,4 +868,3 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
-

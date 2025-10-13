@@ -11,6 +11,9 @@ graphiti-core>=0.1.0
 # LLM Integration (for intelligent query classification)
 openai>=1.0.0  # Real LLM classification (optional, falls back to mock if not available)
 
+# Langfuse for tracing and observability
+langfuse>=2.0.0
+
 # Database
 neo4j>=5.14.0
 

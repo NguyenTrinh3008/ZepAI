@@ -92,12 +92,23 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
     
     Stores metadata about code changes with 48-hour TTL.
     """
+    # Import tracer
+    from app.langfuse_tracer import IngestTracer
+    
+    # Initialize tracer
+    tracer = IngestTracer(
+        operation_type="code_context",
+        name=payload.name,
+        project_id=payload.project_id
+    )
+    
     # Validate payload serialization
     try:
         _ = json.dumps(payload.dict())
         logger.info("✓ Payload serialization OK")
     except TypeError as te:
         logger.error(f"✗ Payload has DateTime: {te}")
+        tracer.error(f"Invalid datetime in payload: {str(te)}")
         raise HTTPException(status_code=400, detail=f"Invalid datetime in payload: {str(te)}")
     
     try:
@@ -312,6 +323,15 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
         project_id_str = str(payload.project_id)
         name_str = str(payload.name)
         
+        # Complete tracer
+        if entity_uuid:
+            tracer.add_entity(entity_uuid, "code_context")
+        tracer.complete(metadata={
+            "file_path": metadata_dict.get('file_path'),
+            "change_type": metadata_dict.get('change_type'),
+            "entities_created": len(entity_uuids) if entity_uuids else 0
+        })
+        
         return JSONResponse(content={
             "episode_id": episode_id_str,
             "project_id": project_id_str,
@@ -320,6 +340,7 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
         })
         
     except HTTPException:
+        tracer.error("HTTP exception occurred")
         raise
     except Exception as e:
         import traceback
@@ -333,6 +354,8 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
         else:
             logger.error(f"Error ingesting code context: {error_msg}")
             logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        tracer.error(error_msg)
         raise HTTPException(status_code=500, detail=f"Failed to ingest code context: {error_msg}")
 
 

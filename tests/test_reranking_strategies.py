@@ -2,6 +2,7 @@
 """
 Comprehensive test and comparison of different reranking strategies
 NOW WITH LLM-POWERED INTELLIGENT STRATEGY SELECTION!
+WITH LANGFUSE TRACING INTEGRATION
 
 Based on Graphiti documentation:
 https://help.getzep.com/graphiti/working-with-data/searching
@@ -14,10 +15,12 @@ Features:
 - Real-world coding scenarios
 - Node distance testing with focal nodes
 - Comparison: Manual vs LLM classification
+- Langfuse tracing for observability
 """
 import asyncio
 import sys
 import time
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 from collections import defaultdict
@@ -31,7 +34,18 @@ from app.services.search_service import search_knowledge_graph
 from app.config import search as search_config
 from app.query_classifier import SmartSearchService, LLMQueryClassifier
 
+# Import tracing helpers
+from test_tracing_helpers import (
+    init_test_session, trace_test_scenario, trace_search_query,
+    trace_llm_classification, trace_performance_metrics,
+    trace_error, flush_test_traces, log_test_summary
+)
+
 PROJECT_ID = "innocody_test_project"
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Test Query Categories
 QUERY_CATEGORIES = {
@@ -78,11 +92,12 @@ async def test_single_strategy_with_timing(
     limit: int = 5
 ) -> Dict:
     """Test a single reranking strategy with performance timing"""
-    print(f"\n{'='*80}")
-    print(f"Strategy: {strategy.upper()}")
-    print(f"{'='*80}")
-    
-    graphiti = await get_graphiti()
+    with trace_search_query(query, strategy, expected_results=limit):
+        print(f"\n{'='*80}")
+        print(f"Strategy: {strategy.upper()}")
+        print(f"{'='*80}")
+        
+        graphiti = await get_graphiti()
     
     try:
         # Time the search
@@ -189,13 +204,14 @@ def analyze_performance(results_by_strategy: Dict[str, Dict]) -> Dict[str, Any]:
 
 async def test_llm_strategy_selection():
     """NEW: Test LLM-powered intelligent strategy selection"""
-    print(f"\n{'='*80}")
-    print(f"LLM-POWERED INTELLIGENT STRATEGY SELECTION TEST")
-    print(f"{'='*80}")
-    print(f"Project: {PROJECT_ID}")
-    
-    graphiti = await get_graphiti()
-    smart_service = SmartSearchService()
+    with trace_test_scenario("LLM Strategy Selection", "llm_classification"):
+        print(f"\n{'='*80}")
+        print(f"LLM-POWERED INTELLIGENT STRATEGY SELECTION TEST")
+        print(f"{'='*80}")
+        print(f"Project: {PROJECT_ID}")
+        
+        graphiti = await get_graphiti()
+        smart_service = SmartSearchService()
     
     llm_results = {}
     llm_performance = defaultdict(list)
@@ -249,6 +265,9 @@ async def test_llm_strategy_selection():
                 clean_reasoning = reasoning.replace('\u2192', '->').replace('\u2019', "'").replace('\u201c', '"').replace('\u201d', '"')
                 print(f"  Reasoning: {clean_reasoning[:80]}...")
                 print(f"  Results: {len(result.get('results', []))} found in {search_time:.3f}s")
+                
+                # Trace LLM classification
+                trace_llm_classification(query, selected_strategy, confidence, reasoning)
                 
                 # Store results
                 category_results[query] = {
@@ -321,14 +340,15 @@ async def test_llm_strategy_selection():
 
 async def comprehensive_strategy_comparison():
     """Comprehensive comparison across multiple query categories"""
-    print(f"\n{'='*80}")
-    print(f"COMPREHENSIVE RERANKING STRATEGIES ANALYSIS")
-    print(f"{'='*80}")
-    print(f"Project: {PROJECT_ID}")
-    
-    # Get available strategies
-    strategies = list(search_config.get_available_strategies().keys())
-    strategies = [s for s in strategies if s != "node_distance"]  # Skip node_distance for now
+    with trace_test_scenario("Comprehensive Strategy Comparison", "performance_analysis"):
+        print(f"\n{'='*80}")
+        print(f"COMPREHENSIVE RERANKING STRATEGIES ANALYSIS")
+        print(f"{'='*80}")
+        print(f"Project: {PROJECT_ID}")
+        
+        # Get available strategies
+        strategies = list(search_config.get_available_strategies().keys())
+        strategies = [s for s in strategies if s != "node_distance"]  # Skip node_distance for now
     
     print(f"\nTesting strategies: {', '.join(strategies)}")
     print(f"Query categories: {', '.join(QUERY_CATEGORIES.keys())}")
@@ -558,12 +578,17 @@ async def test_with_focal_node():
 
 
 async def main():
-    """Main test runner with comprehensive options - NOW WITH LLM!"""
+    """Main test runner with comprehensive options - NOW WITH LLM AND TRACING!"""
+    # Initialize test session
+    session_id = init_test_session("reranking_strategies")
+    
     print("=" * 80)
     print("GRAPHITI RERANKING STRATEGIES COMPREHENSIVE TEST")
     print("NOW WITH LLM-POWERED INTELLIGENT STRATEGY SELECTION!")
+    print("WITH LANGFUSE TRACING INTEGRATION")
     print("Based on: https://help.getzep.com/graphiti/working-with-data/searching")
     print("=" * 80)
+    print(f"Session ID: {session_id}")
     
     print("\nAvailable Reranking Strategies:")
     for name, desc in search_config.get_available_strategies().items():
@@ -601,6 +626,10 @@ async def main():
         print("  - Query complexity (specific vs vague)")
         print("  - Context (conversation type, current file)")
         print("\nResults saved to: llm_reranking_analysis.json")
+        
+        # Log summary and flush traces
+        log_test_summary()
+        flush_test_traces()
         
     elif choice == "2":
         # Comprehensive analysis
@@ -717,6 +746,10 @@ async def main():
         print("Invalid choice, running LLM-powered analysis")
         llm_results, llm_performance = await test_llm_strategy_selection()
         await save_results_to_json(llm_results, llm_performance, "llm_reranking_analysis.json")
+        
+        # Log summary and flush traces
+        log_test_summary()
+        flush_test_traces()
 
 
 if __name__ == "__main__":
