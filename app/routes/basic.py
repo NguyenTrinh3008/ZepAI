@@ -13,13 +13,18 @@ from app.cache import invalidate_search_cache
 router = APIRouter(prefix="", tags=["basic-ingest"])
 
 
-@router.post("/ingest/text")
+@router.post("/ingest/text", operation_id="ingest_text")
 async def ingest_text(payload: IngestText, graphiti=Depends(get_graphiti)):
     """Ingest plain text into knowledge graph"""
     import logging
     logger = logging.getLogger(__name__)
     
-    ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
+    # Parse reference time (handle 'Z' suffix for Python < 3.11 compatibility)
+    if payload.reference_time:
+        time_str = payload.reference_time.replace('Z', '+00:00')
+        ts = datetime.fromisoformat(time_str)
+    else:
+        ts = datetime.utcnow()
     logger.info(f"Ingesting text with group_id: {payload.group_id}")
     
     ep = await graphiti.add_episode(
@@ -40,13 +45,18 @@ async def ingest_text(payload: IngestText, graphiti=Depends(get_graphiti)):
     }
 
 
-@router.post("/ingest/message")
+@router.post("/ingest/message", operation_id="ingest_message")
 async def ingest_message(payload: IngestMessage, graphiti=Depends(get_graphiti)):
     """Ingest conversation messages into knowledge graph"""
     import logging
     logger = logging.getLogger(__name__)
     
-    ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
+    # Parse reference time (handle 'Z' suffix for Python < 3.11 compatibility)
+    if payload.reference_time:
+        time_str = payload.reference_time.replace('Z', '+00:00')
+        ts = datetime.fromisoformat(time_str)
+    else:
+        ts = datetime.utcnow()
     body = "\n".join(payload.messages)
     
     logger.info(f"Ingesting message with group_id: {payload.group_id}, name: {payload.name}")
@@ -69,10 +79,15 @@ async def ingest_message(payload: IngestMessage, graphiti=Depends(get_graphiti))
     }
 
 
-@router.post("/ingest/json")
+@router.post("/ingest/json", operation_id="ingest_json")
 async def ingest_json(payload: IngestJSON, graphiti=Depends(get_graphiti)):
     """Ingest JSON data into knowledge graph"""
-    ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
+    # Parse reference time (handle 'Z' suffix for Python < 3.11 compatibility)
+    if payload.reference_time:
+        time_str = payload.reference_time.replace('Z', '+00:00')
+        ts = datetime.fromisoformat(time_str)
+    else:
+        ts = datetime.utcnow()
     
     ep = await graphiti.add_episode(
         name=payload.name,

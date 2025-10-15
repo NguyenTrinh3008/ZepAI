@@ -14,7 +14,7 @@ router = APIRouter(prefix="", tags=["search"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/search")
+@router.post("/search", operation_id="search")
 async def search(req: SearchRequest, graphiti=Depends(get_graphiti)):
     """
     Search knowledge graph with semantic search and advanced reranking

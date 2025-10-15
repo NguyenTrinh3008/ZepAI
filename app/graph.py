@@ -56,30 +56,51 @@ except Exception as e:
 # ============================================================================
 # MONKEY PATCH: Fix EntityNode creation with None summary field
 # ============================================================================
+# Save the original function before patching
+import graphiti_core.nodes
+_original_get_entity_node_from_record = graphiti_core.nodes.get_entity_node_from_record
+
+def _convert_neo4j_datetime(neo4j_datetime):
+    """Convert Neo4j DateTime to Python datetime"""
+    if neo4j_datetime is None:
+        return datetime.now()
+    
+    # Handle Neo4j DateTime objects
+    if hasattr(neo4j_datetime, 'to_native'):
+        return neo4j_datetime.to_native()
+    elif hasattr(neo4j_datetime, 'isoformat'):
+        return datetime.fromisoformat(neo4j_datetime.isoformat())
+    elif isinstance(neo4j_datetime, str):
+        return _patched_parse_db_date(neo4j_datetime)
+    else:
+        return datetime.now()
+
 def _patched_get_entity_node_from_record(record, provider):
     """Fixed get_entity_node_from_record that handles None summary field"""
-    from graphiti_core.nodes import get_entity_node_from_record as _original
     from graphiti_core.nodes import EntityNode
+    from graphiti_core.helpers import parse_db_date
     
-    # Extract data from record
-    entity_data = dict(record)
-    
-    # Fix None summary field - replace with empty string
-    if entity_data.get('summary') is None:
-        entity_data['summary'] = ""
+    # Extract data from record - mimic original behavior
+    entity_data = {
+        'uuid': record.get('uuid'),
+        'group_id': record.get('group_id'),
+        'name': record.get('name'),
+        'name_embedding': record.get('name_embedding'),
+        'labels': record.get('labels', []),
+        'created_at': _convert_neo4j_datetime(record.get('created_at')) if record.get('created_at') else datetime.now(),
+        'summary': record.get('summary') or "",  # Fix: Replace None with empty string
+    }
     
     # Create EntityNode with fixed data
-    try:
-        return EntityNode(**entity_data)
-    except Exception as e:
-        logger.warning(f"Error creating EntityNode with fixed data: {e}")
-        # Fallback to original function
-        return _original(record, provider)
+    return EntityNode(**entity_data)
 
-# Monkey patch get_entity_node_from_record in graphiti_core.nodes
+# Monkey patch get_entity_node_from_record in multiple places
 try:
     import graphiti_core.nodes
+    import graphiti_core.search.search_utils
+    
     graphiti_core.nodes.get_entity_node_from_record = _patched_get_entity_node_from_record
+    graphiti_core.search.search_utils.get_entity_node_from_record = _patched_get_entity_node_from_record
     logger.info("✓ Patched get_entity_node_from_record function to handle None summary")
 except Exception as e:
     logger.warning(f"Could not patch get_entity_node_from_record: {e}")

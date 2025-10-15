@@ -25,7 +25,7 @@ router = APIRouter(prefix="", tags=["code"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/ingest/code")
+@router.post("/ingest/code", operation_id="ingest_code_change")
 async def ingest_code_change(payload: IngestCodeChange, graphiti=Depends(get_graphiti)):
     """
     Ingest simple code change with LLM importance scoring
@@ -85,7 +85,7 @@ async def ingest_code_change(payload: IngestCodeChange, graphiti=Depends(get_gra
         raise HTTPException(status_code=500, detail=f"Failed to ingest code change: {str(e)}")
 
 
-@router.post("/ingest/code-context")
+@router.post("/ingest/code-context", operation_id="ingest_code_context")
 async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_graphiti)):
     """
     Ingest code conversation metadata (NOT actual code!)
@@ -114,8 +114,13 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
     try:
         logger.info("=== START INGEST ===")
         
-        # Parse reference time
-        ts = datetime.fromisoformat(payload.reference_time) if payload.reference_time else datetime.utcnow()
+        # Parse reference time (handle 'Z' suffix for Python < 3.11 compatibility)
+        if payload.reference_time:
+            # Replace 'Z' with '+00:00' for compatibility with datetime.fromisoformat()
+            time_str = payload.reference_time.replace('Z', '+00:00')
+            ts = datetime.fromisoformat(time_str)
+        else:
+            ts = datetime.utcnow()
         logger.info(f"Parsed reference_time: {type(ts)} = {ts}")
         
         # Validate required fields
@@ -359,7 +364,7 @@ async def ingest_code_context(payload: IngestCodeContext, graphiti=Depends(get_g
         raise HTTPException(status_code=500, detail=f"Failed to ingest code context: {error_msg}")
 
 
-@router.post("/search/code")
+@router.post("/search/code", operation_id="search_code")
 async def search_code(req: SearchCodeRequest, graphiti=Depends(get_graphiti)):
     """
     Search code memories with strict project isolation and filters

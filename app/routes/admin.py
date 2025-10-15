@@ -25,34 +25,34 @@ logger = logging.getLogger(__name__)
 # CACHE MANAGEMENT
 # =============================================================================
 
-@router.get("/cache/stats")
+@router.get("/cache/stats", operation_id="get_cache_stats")
 async def get_cache_stats():
     """Get cache statistics"""
     return get_cache_metrics()
 
 
-@router.post("/cache/clear")
+@router.post("/cache/clear", operation_id="clear_cache")
 async def clear_cache():
     """Clear all cache"""
     invalidate_all_cache()
     return {"message": "Cache cleared successfully"}
 
 
-@router.post("/cache/clear-search")
+@router.post("/cache/clear-search", operation_id="clear_search_cache")
 async def clear_search_cache():
     """Clear search cache only"""
     invalidate_search_cache()
     return {"message": "Search cache cleared successfully"}
 
 
-@router.post("/cache/clear-node/{node_uuid}")
+@router.post("/cache/clear-node/{node_uuid}", operation_id="clear_node_cache")
 async def clear_node_cache(node_uuid: str):
     """Clear cache for specific node"""
     invalidate_node_cache(node_uuid)
     return {"message": f"Cache for node {node_uuid} cleared successfully"}
 
 
-@router.get("/cache/health")
+@router.get("/cache/health", operation_id="cache_health")
 async def cache_health():
     """Check cache health"""
     stats = get_cache_metrics()
@@ -66,13 +66,13 @@ async def cache_health():
 # LANGFUSE MONITORING
 # =============================================================================
 
-@router.get("/langfuse/health")
+@router.get("/langfuse/health", operation_id="langfuse_health")
 async def check_langfuse_health():
     """Check Langfuse tracing health status"""
     return get_health_status()
 
 
-@router.post("/langfuse/flush")
+@router.post("/langfuse/flush", operation_id="flush_langfuse_traces")
 async def flush_langfuse_traces():
     """Manually flush all pending traces to Langfuse"""
     try:
@@ -90,7 +90,7 @@ async def flush_langfuse_traces():
 # ADMIN OPERATIONS
 # =============================================================================
 
-@router.post("/admin/cleanup")
+@router.post("/admin/cleanup", operation_id="manual_cleanup")
 async def manual_cleanup(graphiti=Depends(get_graphiti)):
     """
     Manually trigger cleanup of expired memories
@@ -111,7 +111,7 @@ async def manual_cleanup(graphiti=Depends(get_graphiti)):
         raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
 
 
-@router.get("/stats/{project_id}")
+@router.get("/stats/{project_id}", operation_id="get_project_stats")
 async def get_stats(project_id: str, graphiti=Depends(get_graphiti)):
     """
     Get statistics for a specific project
@@ -129,7 +129,7 @@ async def get_stats(project_id: str, graphiti=Depends(get_graphiti)):
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
 
-@router.get("/export/{group_id}")
+@router.get("/export/{group_id}", operation_id="export_conversation")
 async def export_conversation(group_id: str, graphiti=Depends(get_graphiti)):
     """Export conversation to JSON for backup/sharing"""
     try:
@@ -185,7 +185,7 @@ async def export_conversation(group_id: str, graphiti=Depends(get_graphiti)):
 # CONFIG MANAGEMENT
 # =============================================================================
 
-@router.get("/config/neo4j")
+@router.get("/config/neo4j", operation_id="get_neo4j_config")
 async def get_neo4j_config():
     """Get Neo4j configuration (non-sensitive)"""
     return {
@@ -195,7 +195,7 @@ async def get_neo4j_config():
     }
 
 
-@router.post("/config/reload-neo4j")
+@router.post("/config/reload-neo4j", operation_id="reload_neo4j_config")
 async def reload_neo4j_config():
     """Reload Neo4j configuration"""
     reset_graphiti_cache()
@@ -206,7 +206,7 @@ async def reload_neo4j_config():
 # DEBUG ENDPOINTS
 # =============================================================================
 
-@router.get("/debug/all-entities")
+@router.get("/debug/all-entities", operation_id="debug_all_entities")
 async def debug_all_entities(limit: int = 50, graphiti=Depends(get_graphiti)):
     """Debug: Show ALL entities regardless of project_id"""
     try:
@@ -249,7 +249,7 @@ async def debug_all_entities(limit: int = 50, graphiti=Depends(get_graphiti)):
         return {"error": str(e)}
 
 
-@router.get("/debug/entity/{entity_uuid}")
+@router.get("/debug/entity/{entity_uuid}", operation_id="debug_entity_detail")
 async def debug_entity_detail(entity_uuid: str, graphiti=Depends(get_graphiti)):
     """Debug: Show single entity detail"""
     try:
@@ -273,7 +273,7 @@ async def debug_entity_detail(entity_uuid: str, graphiti=Depends(get_graphiti)):
         return {"error": str(e)}
 
 
-@router.get("/debug/episodes/{group_id}")
+@router.get("/debug/episodes/{group_id}", operation_id="debug_episodes")
 async def debug_episodes_by_group(group_id: str, graphiti=Depends(get_graphiti)):
     """Debug endpoint to check entities and relationships by group_id"""
     try:

@@ -10,14 +10,11 @@ All business logic has been moved to:
 - routes/admin.py - Admin, debug, cache management
 - services/search_service.py - Search business logic
 """
-from fastapi import FastAPI, Depends, Request, status, Response
+from fastapi import FastAPI, Request, status, Response
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import logging
-
-from app.schemas import IngestConversationContext
-from app.graph import get_graphiti
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +38,7 @@ app.include_router(admin.router)
 app.include_router(innocody_router)
 
 
-@app.get("/")
+@app.get("/", operation_id="root")
 def root():
     """
     Root endpoint - API documentation
@@ -50,33 +47,35 @@ def root():
         "status": "ok",
         "service": "graphiti-memory-layer",
         "version": "2.0.0",
-        "endpoints": {
-            # Basic ingest
+        "core_tools": {
+            # 🔍 SEARCH (2 tools)
+            "/search": "POST - Search knowledge graph (supports LLM classification via use_llm_classification=true)",
+            "/search/code": "POST - Search code memories with filters",
+            
+            # 📥 INGEST (6 tools)
             "/ingest/text": "POST - Ingest plain text",
             "/ingest/message": "POST - Ingest conversation messages",
             "/ingest/json": "POST - Ingest JSON data",
-            
-            # Code context
             "/ingest/code": "POST - Ingest simple code change with LLM scoring",
-            "/ingest/code-context": "POST - Ingest code conversation metadata (Phase 1+)",
-            "/search/code": "POST - Search code memories with filters",
-            
-            # Conversation context (Phase 1.5)
+            "/ingest/code-context": "POST - Ingest code conversation metadata (advanced)",
             "/conversation/ingest": "POST - Ingest full conversation context",
+        },
+        "analytics": {
+            # Conversation analytics
             "/conversation/requests/{project_id}": "GET - Get conversation requests",
             "/conversation/flow/{request_id}": "GET - Get conversation flow",
             "/conversation/context-stats/{project_id}": "GET - Get context file usage stats",
             "/conversation/tool-stats": "GET - Get tool call statistics",
             
-            # Search
-            "/search": "POST - Search knowledge graph",
-            
-            # Admin & Stats
+            # Stats
             "/stats/{project_id}": "GET - Get project statistics",
             "/export/{group_id}": "GET - Export conversation to JSON",
+        },
+        "admin": {
+            # Admin
             "/admin/cleanup": "POST - Manually cleanup expired memories",
             
-            # Cache management
+            # Cache
             "/cache/stats": "GET - Get cache statistics",
             "/cache/clear": "POST - Clear all cache",
             "/cache/clear-search": "POST - Clear search cache",
@@ -91,7 +90,8 @@ def root():
             "/debug/all-entities": "GET - Show all entities (debug)",
             "/debug/entity/{entity_uuid}": "GET - Show entity detail (debug)",
             "/debug/episodes/{group_id}": "GET - Show episodes by group (debug)",
-            
+        },
+        "integrations": {
             # Innocody integration
             "/innocody/webhook": "POST - Receive Innocody DiffChunk",
             "/innocody/webhook/batch": "POST - Receive batch of DiffChunks",
@@ -101,27 +101,14 @@ def root():
     }
 
 
-@app.get("/favicon.ico")
+@app.get("/favicon.ico", operation_id="favicon")
 def favicon():
     """Favicon endpoint"""
     return Response(status_code=204)
 
 
-# For backward compatibility - redirect old endpoint
-@app.post("/ingest/conversation")
-async def ingest_conversation_compat(
-    payload: IngestConversationContext,
-    graphiti=Depends(get_graphiti)
-):
-    """
-    Backward compatibility: redirect to /conversation/ingest
-    This will be removed in future versions.
-    
-    Note: This is a simple wrapper that calls the actual endpoint from routes.
-    """
-    from app.routes.conversation import ingest_conversation
-    
-    return await ingest_conversation(payload, graphiti)
+# Backward compatibility endpoint removed - use /conversation/ingest instead
+# Previous endpoint: POST /ingest/conversation → Now use: POST /conversation/ingest
 
 
 # =============================================================================

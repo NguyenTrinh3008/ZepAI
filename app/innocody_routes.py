@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/innocody", tags=["innocody"])
 
 
-@router.post("/webhook")
+@router.post("/webhook", operation_id="innocody_webhook")
 async def innocody_webhook(
     payload: Dict[str, Any],
     background_tasks: BackgroundTasks,
@@ -122,7 +122,7 @@ async def innocody_webhook(
         )
 
 
-@router.get("/health")
+@router.get("/health", operation_id="innocody_health")
 async def innocody_health_check():
     """Health check endpoint for Innocody integration"""
     return {

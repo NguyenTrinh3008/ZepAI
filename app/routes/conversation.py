@@ -29,7 +29,7 @@ router = APIRouter(prefix="/conversation", tags=["conversation"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/ingest")
+@router.post("/ingest", operation_id="ingest_conversation")
 async def ingest_conversation(payload: IngestConversationContext, graphiti=Depends(get_graphiti)):
     """
     Ingest full conversation context - Phase 1.5
@@ -101,7 +101,9 @@ async def ingest_conversation(payload: IngestConversationContext, graphiti=Depen
         entity_summary = " | ".join(summary_parts) if summary_parts else "Conversation context"
         entity_name = f"Conversation {payload.chat_meta.chat_id}"
 
-        ts = datetime.fromisoformat(payload.timestamp.replace('Z', ''))
+        # Parse timestamp (handle 'Z' suffix for Python < 3.11 compatibility)
+        time_str = payload.timestamp.replace('Z', '+00:00')
+        ts = datetime.fromisoformat(time_str)
         
         episode = await graphiti.add_episode(
             name=entity_name,
@@ -315,7 +317,7 @@ async def ingest_conversation(payload: IngestConversationContext, graphiti=Depen
         raise HTTPException(status_code=500, detail=f"Failed to ingest conversation context: {str(e)}")
 
 
-@router.get("/requests/{project_id}")
+@router.get("/requests/{project_id}", operation_id="get_conversation_requests")
 async def get_conversation_requests(
     project_id: str,
     chat_id: str = None,
@@ -354,7 +356,7 @@ async def get_conversation_requests(
         raise HTTPException(status_code=500, detail=f"Failed to search requests: {str(e)}")
 
 
-@router.get("/flow/{request_id}")
+@router.get("/flow/{request_id}", operation_id="get_conversation_flow")
 async def get_conversation_flow(
     request_id: str,
     graphiti=Depends(get_graphiti)
@@ -382,7 +384,7 @@ async def get_conversation_flow(
         raise HTTPException(status_code=500, detail=f"Failed to get conversation flow: {str(e)}")
 
 
-@router.get("/context-stats/{project_id}")
+@router.get("/context-stats/{project_id}", operation_id="get_context_stats")
 async def get_context_file_stats(
     project_id: str,
     days_ago: int = 7,
@@ -422,7 +424,7 @@ async def get_context_file_stats(
         raise HTTPException(status_code=500, detail=f"Failed to get context stats: {str(e)}")
 
 
-@router.get("/tool-stats")
+@router.get("/tool-stats", operation_id="get_tool_stats")
 async def get_tool_stats(
     days_ago: int = 7,
     graphiti=Depends(get_graphiti)
