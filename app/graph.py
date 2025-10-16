@@ -120,16 +120,25 @@ async def get_graphiti() -> Graphiti:
     """Lấy Graphiti instance với caching"""
     global _graphiti
     if _graphiti is None:
-        # Graphiti uses OpenAI embeddings by default (text-embedding-ada-002)
-        # To use text-embedding-3-small, set OPENAI_EMBEDDING_MODEL env var
-        # Note: Graphiti may not support custom embedding models out of the box
-        # Check Graphiti docs for embedding configuration
+        # IMPORTANT: Configure Graphiti to use text-embedding-ada-002 (1536 dims)
+        # to match existing entity embeddings in Neo4j
+        from graphiti_core.embedder import OpenAIEmbedder, OpenAIEmbedderConfig
+        
+        embedder_config = OpenAIEmbedderConfig(
+            embedding_model="text-embedding-ada-002",  # Match existing embeddings!
+            embedding_dim=1536,  # Match Neo4j embeddings
+            api_key=os.getenv("OPENAI_API_KEY")
+        )
+        embedder = OpenAIEmbedder(config=embedder_config)
         
         _graphiti = Graphiti(
             uri=neo4j.get_uri(),
             user=neo4j.get_user(),
             password=neo4j.get_password(),
+            embedder=embedder  # Use custom embedder
         )
+        
+        logger.info(f"✓ Graphiti initialized with {embedder_config.embedding_model} ({embedder_config.embedding_dim} dims)")
     return _graphiti
 
 @cached_with_ttl(ttl=cache.GRAPHITI_SEARCH_TTL_SECONDS, key_prefix="graphiti_search")

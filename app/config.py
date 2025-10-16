@@ -54,6 +54,12 @@ class LLMConfig:
     TRANSLATION_TEMPERATURE: float = 0.2
     TRANSLATION_MAX_TOKENS: int = 100
     
+    # Summarization settings
+    USE_LLM_SUMMARIZATION: bool = os.getenv("USE_LLM_SUMMARIZATION", "true").lower() == "true"
+    SUMMARY_MAX_LENGTH: int = int(os.getenv("SUMMARY_MAX_LENGTH", "200"))
+    SUMMARY_TEMPERATURE: float = 0.2  # Low temp for consistent summaries
+    SUMMARY_MAX_TOKENS: int = 250
+    
     @classmethod
     def get_api_key(cls) -> Optional[str]:
         return cls.OPENAI_API_KEY

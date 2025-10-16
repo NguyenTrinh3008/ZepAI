@@ -1,21 +1,41 @@
 # app/schemas.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic import ConfigDict
 from typing import Optional, Any, List
 
 class IngestText(BaseModel):
     name: str
-    text: str
+    text: str = Field(..., min_length=1, description="Text content (cannot be empty)")
     reference_time: Optional[str] = None
     source_description: Optional[str] = "app"
     group_id: Optional[str] = None
+    
+    @field_validator('text')
+    @classmethod
+    def text_not_empty(cls, v: str) -> str:
+        """Validate that text is not empty or only whitespace"""
+        if not v or not v.strip():
+            raise ValueError("Text content cannot be empty or only whitespace")
+        return v
 
 class IngestMessage(BaseModel):
     name: str
-    messages: List[str]
+    messages: List[str] = Field(..., min_length=1, description="List of messages (cannot be empty)")
     reference_time: Optional[str] = None
     source_description: Optional[str] = "chat"
     group_id: Optional[str] = None
+    
+    @field_validator('messages')
+    @classmethod
+    def messages_not_empty(cls, v: List[str]) -> List[str]:
+        """Validate that messages list is not empty and contains valid messages"""
+        if not v:
+            raise ValueError("Messages list cannot be empty")
+        # Check each message is not empty
+        for msg in v:
+            if not msg or not msg.strip():
+                raise ValueError("Individual messages cannot be empty or only whitespace")
+        return v
 
 class IngestJSON(BaseModel):
     name: str

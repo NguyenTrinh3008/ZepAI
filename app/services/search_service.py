@@ -361,9 +361,32 @@ async def _perform_search_with_reranking(
     # Strategy 1: RRF (Default) - Hybrid Search with Reciprocal Rank Fusion
     if rerank_strategy == "rrf":
         logger.info("✓ Executing RRF (Reciprocal Rank Fusion) search")
-        results = await graphiti.search(query)
-        logger.info(f"✓ RRF returned {len(results)} results")
-        return results[:limit]
+        logger.info(f"  Query: '{query}'")
+        logger.info(f"  Limit: {limit}")
+        
+        try:
+            results = await graphiti.search(query)
+            logger.info(f"✓ RRF returned {len(results)} results")
+            
+            # Debug: Log result types
+            if len(results) > 0:
+                logger.info(f"  First result type: {type(results[0])}")
+                if hasattr(results[0], '__dict__'):
+                    logger.info(f"  First result attrs: {list(results[0].__dict__.keys())}")
+            else:
+                logger.warning("⚠️ Graphiti search returned EMPTY results!")
+                logger.warning("  Possible causes:")
+                logger.warning("  1. No entities with embeddings in database")
+                logger.warning("  2. Query embedding generation failed")
+                logger.warning("  3. Vector similarity threshold too high")
+                logger.warning("  4. Vector index not properly configured")
+                
+            return results[:limit]
+        except Exception as e:
+            logger.error(f"❌ Graphiti search raised exception: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
     
     # Strategy 2: Node Distance - Prioritizes results near focal node
     elif rerank_strategy == "node_distance":
@@ -586,8 +609,27 @@ async def search_knowledge_graph(
             rerank_strategy=rerank_strategy
         )
         
+        logger.info(f"📊 Raw search results: {len(results)} items")
+        
+        # If empty, log detailed debug info
+        if len(results) == 0:
+            logger.error("❌ GRAPHITI RETURNED 0 RESULTS!")
+            logger.error(f"   Query: {search_query}")
+            logger.error(f"   Group ID filter: {group_id}")
+            logger.error(f"   Strategy: {rerank_strategy}")
+            logger.error("   Possible causes:")
+            logger.error("   1. Graphiti searches RELATES_TO edges, but data has isolated Entity nodes")
+            logger.error("   2. Graphiti expects fact_embedding on edges, but data has name_embedding on nodes")
+            logger.error("   3. Data structure mismatch between Graphiti expectations and actual Neo4j schema")
+        
         # Normalize results
         normalized = [normalize_search_result(r) for r in results]
+        logger.info(f"📊 After normalization: {len(normalized)} items")
+        
+        # Debug: Log first few results
+        for idx, item in enumerate(normalized[:3]):
+            logger.debug(f"  Result {idx}: group_id={item.get('group_id')}, text={item.get('text', '')[:50]}")
+        
         tracer.add_step("normalization", output=f"Normalized {len(normalized)} results")
         
         # Enrich metadata
@@ -598,7 +640,18 @@ async def search_knowledge_graph(
         if group_id:
             await fetch_group_ids(normalized, graphiti)
             before_count = len(normalized)
-            normalized = [item for item in normalized if item.get("group_id") == group_id]
+            
+            # Filter by group_id, but keep items without group_id if they match
+            filtered = []
+            for item in normalized:
+                item_group = item.get("group_id")
+                # Keep if: exact match OR no group_id (could be global/shared)
+                if item_group == group_id or item_group is None:
+                    filtered.append(item)
+            
+            normalized = filtered
+            
+            logger.info(f"Group filter: {before_count} → {len(normalized)} results (group_id={group_id})")
             tracer.add_step("group_filter", metadata={
                 "group_id": group_id,
                 "before": before_count,

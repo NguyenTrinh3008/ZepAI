@@ -6,6 +6,7 @@ Transform Innocody output to conversation context for memory layer
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import hashlib
+import logging
 
 from .schemas import (
     IngestConversationContext,
@@ -17,6 +18,9 @@ from .schemas import (
     ModelResponseMetadata,
     CodeChangeMetadata,
 )
+from .config import LLMConfig
+
+logger = logging.getLogger(__name__)
 
 
 def calculate_hash(text: str) -> str:
@@ -99,7 +103,11 @@ def transform_innocody_to_conversation(
     for idx, msg in enumerate(messages):
         # Summarize content (or use provided summary)
         content = msg.get('content', '')
-        content_summary = msg.get('summary') or _summarize_content(content)
+        content_summary = msg.get('summary') or _summarize_content(
+            content, 
+            max_length=LLMConfig.SUMMARY_MAX_LENGTH,
+            use_llm=LLMConfig.USE_LLM_SUMMARIZATION
+        )
         content_hash = calculate_hash(content) if content else None
         
         # Parse usage
@@ -227,13 +235,87 @@ def transform_innocody_to_conversation(
     )
 
 
-def _summarize_content(content: str, max_length: int = 200) -> str:
-    """Simple content summarization"""
+def _summarize_content(content: str, max_length: int = 200, use_llm: bool = True) -> str:
+    """
+    Intelligent content summarization
+    
+    Logic:
+    - If content <= max_length: Keep original (no summarization needed)
+    - If content > max_length: Summarize to exactly max_length chars
+    
+    Args:
+        content: Full message content
+        max_length: Target summary length (default 200 chars)
+        use_llm: Use LLM for intelligent summary (default True)
+    
+    Returns:
+        Original content if short enough, otherwise intelligent summary
+    """
+    # Keep original if already short enough
     if len(content) <= max_length:
         return content
     
-    # Truncate and add ellipsis
-    return content[:max_length] + "..."
+    # Content is too long, need summarization
+    logger.info(f"Content length {len(content)} > {max_length}, summarizing...")
+    
+    # Option 1: LLM-based intelligent summary (preserves key points)
+    if use_llm:
+        try:
+            import os
+            from openai import OpenAI
+            
+            api_key = os.getenv('OPENAI_API_KEY')
+            if not api_key:
+                logger.warning("No OpenAI API key, falling back to truncation")
+                return content[:max_length-3] + "..."
+            
+            client = OpenAI(api_key=api_key)
+            
+            # Build prompt for summarization
+            prompt = f"""Summarize this message in EXACTLY {max_length} characters or less. Preserve the most important information.
+
+**Instructions:**
+- Maximum length: {max_length} characters (strictly enforced)
+- Focus on: main action, key technical details (files/functions/errors), proposed solution
+- Be concise but complete
+- Don't add "Summary:" prefix or extra text
+
+**Message to summarize:**
+{content}
+
+**{max_length}-character summary:**"""
+            
+            response = client.chat.completions.create(
+                model=os.getenv('OPENAI_MODEL', LLMConfig.MODEL_NAME),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=LLMConfig.SUMMARY_TEMPERATURE,
+                max_tokens=LLMConfig.SUMMARY_MAX_TOKENS,
+            )
+            
+            summary = response.choices[0].message.content.strip()
+            
+            # Remove common prefixes that LLM might add
+            prefixes_to_remove = ["Summary:", "Summary -", "Here's the summary:"]
+            for prefix in prefixes_to_remove:
+                if summary.startswith(prefix):
+                    summary = summary[len(prefix):].strip()
+            
+            # Strictly enforce max_length
+            if len(summary) > max_length:
+                summary = summary[:max_length-3] + "..."
+                logger.debug(f"Truncated LLM summary from {len(response.choices[0].message.content)} to {max_length} chars")
+            
+            logger.info(f"✓ LLM summarized: {len(content)} → {len(summary)} chars")
+            return summary
+            
+        except Exception as e:
+            # Fallback to truncation on any error
+            logger.warning(f"LLM summarization failed: {e}, using truncation")
+            return content[:max_length-3] + "..."
+    
+    # Option 2: Simple truncation (fallback when use_llm=False)
+    logger.info(f"Using truncation: {len(content)} → {max_length} chars")
+    return content[:max_length-3] + "..."
 
 
 # =============================================================================
